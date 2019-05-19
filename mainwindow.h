@@ -4,6 +4,9 @@
 #include <QMainWindow>
 #include <QFileSystemModel>
 #include <QItemSelectionModel>
+#include <QtConcurrent/QtConcurrent>
+#include <QGraphicsScene>
+#include <QSettings>
 
 namespace Ui {
 class MainWindow;
@@ -24,12 +27,21 @@ private slots:
     void FileSystemHighlight(const QItemSelection &selected, const QItemSelection &deselected);
     void FileSystemExpanded(const QModelIndex &index);
 
+    void thumbnailReady(int num);
+    void thumbnailerIdle();
+
 private:
     Ui::MainWindow *ui;
     QFileSystemModel *fs;
     QItemSelectionModel *fsSelection;
 
-    void populateMetadata(const QString &path);
+    QFutureWatcher<QStringList> *thumbnailer;
+
+    QString toplevel;
+    QString program_player;
+    QString program_thumbnailer;
+
+    QString currentPath;
 };
 
 #endif // MAINWINDOW_H

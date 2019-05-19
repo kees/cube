@@ -19,8 +19,8 @@
 
 QT_BEGIN_MOC_NAMESPACE
 struct qt_meta_stringdata_MainWindow_t {
-    QByteArrayData data[8];
-    char stringdata0[92];
+    QByteArrayData data[11];
+    char stringdata0[127];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -36,12 +36,16 @@ QT_MOC_LITERAL(3, 32, 14), // "QItemSelection"
 QT_MOC_LITERAL(4, 47, 8), // "selected"
 QT_MOC_LITERAL(5, 56, 10), // "deselected"
 QT_MOC_LITERAL(6, 67, 18), // "FileSystemExpanded"
-QT_MOC_LITERAL(7, 86, 5) // "index"
+QT_MOC_LITERAL(7, 86, 5), // "index"
+QT_MOC_LITERAL(8, 92, 14), // "thumbnailReady"
+QT_MOC_LITERAL(9, 107, 3), // "num"
+QT_MOC_LITERAL(10, 111, 15) // "thumbnailerIdle"
 
     },
     "MainWindow\0FileSystemHighlight\0\0"
     "QItemSelection\0selected\0deselected\0"
-    "FileSystemExpanded\0index"
+    "FileSystemExpanded\0index\0thumbnailReady\0"
+    "num\0thumbnailerIdle"
 };
 #undef QT_MOC_LITERAL
 
@@ -51,7 +55,7 @@ static const uint qt_meta_data_MainWindow[] = {
        7,       // revision
        0,       // classname
        0,    0, // classinfo
-       2,   14, // methods
+       4,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -59,12 +63,16 @@ static const uint qt_meta_data_MainWindow[] = {
        0,       // signalCount
 
  // slots: name, argc, parameters, tag, flags
-       1,    2,   24,    2, 0x08 /* Private */,
-       6,    1,   29,    2, 0x08 /* Private */,
+       1,    2,   34,    2, 0x08 /* Private */,
+       6,    1,   39,    2, 0x08 /* Private */,
+       8,    1,   42,    2, 0x08 /* Private */,
+      10,    0,   45,    2, 0x08 /* Private */,
 
  // slots: parameters
     QMetaType::Void, 0x80000000 | 3, 0x80000000 | 3,    4,    5,
     QMetaType::Void, QMetaType::QModelIndex,    7,
+    QMetaType::Void, QMetaType::Int,    9,
+    QMetaType::Void,
 
        0        // eod
 };
@@ -77,6 +85,8 @@ void MainWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         switch (_id) {
         case 0: _t->FileSystemHighlight((*reinterpret_cast< const QItemSelection(*)>(_a[1])),(*reinterpret_cast< const QItemSelection(*)>(_a[2]))); break;
         case 1: _t->FileSystemExpanded((*reinterpret_cast< const QModelIndex(*)>(_a[1]))); break;
+        case 2: _t->thumbnailReady((*reinterpret_cast< int(*)>(_a[1]))); break;
+        case 3: _t->thumbnailerIdle(); break;
         default: ;
         }
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
@@ -119,13 +129,13 @@ int MainWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 2)
+        if (_id < 4)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 2;
+        _id -= 4;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 2)
+        if (_id < 4)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 2;
+        _id -= 4;
     }
     return _id;
 }

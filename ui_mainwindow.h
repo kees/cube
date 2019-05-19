@@ -99,6 +99,7 @@ public:
         lstFiles = new QTreeView(centralWidget);
         lstFiles->setObjectName(QStringLiteral("lstFiles"));
         lstFiles->setFont(font);
+        lstFiles->setStyleSheet(QStringLiteral("background-color: rgb(195, 203, 220);"));
         lstFiles->setIconSize(QSize(60, 60));
         lstFiles->setSortingEnabled(false);
 
