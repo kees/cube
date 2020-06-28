@@ -1,0 +1,8 @@
+# object files
+*.o
+
+# executable
+cube
+
+# qmake
+/.qmake.stash
