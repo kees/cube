@@ -53,8 +53,9 @@ vidfile=$(basename "$vidfull")
 media="$vidlink/$vidfile"
 ln -s "$vidfull" "$media"
 
-# Keep a copy of played videos in "recent" directory.
+# Keep a copy of played videos and its directory in "recent" directory.
 ln -sf "$vidfull" "$recentlink"/
+ln -sf "$vidpath" "$recentlink"/
 # Clean up everything beyond X.. most recent.
 (cd "$recentlink" && ls -1t | tail -n +31 | xargs rm -f)
 

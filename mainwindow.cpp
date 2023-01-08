@@ -249,8 +249,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
     qDebug() << "metadata font size: " << size;
 
-    // scale margins by font size
+    // scale margins by font size, make sure eliding is disabled
     ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: %1px; }").arg(size / 4));
+    ui->tblMetadata->setTextElideMode(Qt::ElideNone);
 }
 
 void MainWindow::thumbnailReady(int num)
