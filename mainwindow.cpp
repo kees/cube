@@ -330,7 +330,7 @@ void MainWindow::thumbnailReady(int num)
         QJsonArray track = json["track"].toArray();
         for (int i=0; i < track.count(); i++) {
             QJsonObject info = track[i].toObject();
-            if (info["@type"] == "General") {
+            if (info["@type"] == "General" && info["Format"].isString()) {
                 row.clear();
                 row.append(new QStandardItem("Format "));
                 row.append(new QStandardItem(info["Format"].toString()));
