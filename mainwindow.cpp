@@ -38,11 +38,12 @@ MainWindow::MainWindow(QWidget *parent) :
     // Model for file metadata.
     metadata = new QStandardItemModel(0, 2);
     ui->tblMetadata->setModel(metadata);
+    ui->tblMetadata->horizontalHeader()->setVisible(false);
+    ui->tblMetadata->verticalHeader()->setVisible(false);
+    ui->tblMetadata->setWordWrap(true);
     ui->tblMetadata->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->tblMetadata->horizontalHeader()->setStretchLastSection(true);
     ui->tblMetadata->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    ui->tblMetadata->horizontalHeader()->setVisible(false);
-    ui->tblMetadata->verticalHeader()->setVisible(false);
 
     // Prepare selections
     fsSelection = new QItemSelectionModel(fs);
@@ -234,11 +235,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     float ratio = (float)availableSize.width() / (float)availableSize.height();
     qDebug() << "window size available: " << availableSize.width() << "x" << availableSize.height() << " (" << ratio << ")";
     qDebug() << "thumbnail size chosen: " << width << "x" << (int)(width * ratio);
-//    ui->grThumbnail->setMaximumSize(width, width / ratio);
-//    ui->grThumbnail->setMinimumSize(width, width / ratio);
-//    ui->tblMetadata->setMaximumHeight(width / ratio);
     ui->grThumbnail->setMinimumSize(width, width / ratio);
-//    ui->grThumbnail->setMaximumSize(width, width / ratio);
     ui->tblMetadata->setMaximumWidth(width);
 
     // Figure out metadata font size
@@ -249,8 +246,10 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
     qDebug() << "metadata font size: " << size;
 
-    // scale margins by font size, make sure eliding is disabled
-    ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: %1px; }").arg(size / 4));
+    // scale padding by font size. But this doesn't work: it seem to break eliding!
+    //int padding = size / 4;
+    //ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: %1px; }").arg(padding));
+    // make sure eliding is disabled (doesn't seem to work with padding above??)
     ui->tblMetadata->setTextElideMode(Qt::ElideNone);
 }
 
@@ -317,7 +316,7 @@ void MainWindow::thumbnailReady(int num)
             QJsonObject info = track[i].toObject();
             if (info["@type"] == "General") {
                 row.clear();
-                row.append(new QStandardItem("Format"));
+                row.append(new QStandardItem("Format "));
                 row.append(new QStandardItem(info["Format"].toString()));
                 metadata->appendRow(row);
 
@@ -339,7 +338,7 @@ void MainWindow::thumbnailReady(int num)
                     qDebug() << "Duration: " + duration;
 
                     row.clear();
-                    row.append(new QStandardItem("Duration"));
+                    row.append(new QStandardItem("Duration "));
                     row.append(new QStandardItem(duration));
                     metadata->appendRow(row);
                 }
@@ -357,8 +356,9 @@ void MainWindow::thumbnailReady(int num)
 
                 QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
                 qDebug() << details;
+
                 row.clear();
-                row.append(new QStandardItem(video));
+                row.append(new QStandardItem(video + " "));
                 row.append(new QStandardItem(details));
                 metadata->appendRow(row);
             }
@@ -372,11 +372,13 @@ void MainWindow::thumbnailReady(int num)
                 QString channels;
                 if (info["ChannelPositions"].isString())
                     channels = info["ChannelPositions"].toString();
-                else
+                else if (info["Channels"].isString())
                     channels = info["Channels"].toString();
+                else
+                    channels = "2"; // assume missing channel count is in stereo
 
                 row.clear();
-                row.append(new QStandardItem(audio));
+                row.append(new QStandardItem(audio + " "));
                 row.append(new QStandardItem(channels));
                 metadata->appendRow(row);
             }
@@ -393,7 +395,7 @@ void MainWindow::thumbnailReady(int num)
                     lang += QString(" (%1)").arg(info["Title"].toString());
 
                 row.clear();
-                row.append(new QStandardItem("Subtitles"));
+                row.append(new QStandardItem("Subtitles "));
                 row.append(new QStandardItem(lang));
                 metadata->appendRow(row);
             }
