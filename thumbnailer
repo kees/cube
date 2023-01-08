@@ -1,8 +1,9 @@
 #!/bin/bash
 CACHE=~/.cache/playback/thumbnails
 EXT=png
+LOG=~/.cache/playback/thumbnailer.log
 
-MEDIA=$(realpath "$1")
+MEDIA=$(realpath "$@")
 
 HASH=$(echo -n "$MEDIA" | sha256sum | awk '{print $1}')
 INDEX=$(echo "$HASH" | cut -c-2)
@@ -13,7 +14,7 @@ JSON="$THUMB.json"
 BASE_EXT=$(echo "$MEDIA" | awk -F. '{print $NF}')
 if [ "$BASE_EXT" == "$MEDIA" ]; then
 	# No extension, just give up.
-	echo "Giving up, no extension: $MEDIA" >&2
+	echo "$MEDIA: giving up, no extension" >> "$LOG"
 	exit 1
 fi
 # TODO: create this safely
@@ -22,35 +23,46 @@ LINK="/tmp/thumbnailer-$$".$BASE_EXT
 thumb_frame()
 {
 	local frame="$1"
-	mpv "$LINK" --really-quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW"
+	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW" 2>&1 >> "$LOG"
 }
 
 do_thumbnail()
 {
-	ln -sf "$1" "$LINK"
-	if ! thumb_frame 0 ; then
-		rm -f "$LINK" "$NEW"
-		return
-	fi
+	ln -sf "$@" "$LINK"
+	local frame
 
-	# Check for a boring thumbnail (i.e. mostly the same color)
-	COLORS=5
-	COUNT=$(convert "$NEW" +dither -colors "$COLORS" -unique-colors txt: | grep -v '^#' | wc -l)
-	if [ $COUNT -lt $COLORS ] ; then
-		# Pick a later image?
-		if ! thumb_frame 60 ; then
-			rm -f "$LINK" "$NEW"
-			return
+	# Scan for a few different frame positions
+	for frame in 0 60 30 1 2 4 8 16; do
+		if ! thumb_frame $frame ; then
+			# Failed to get a frame -- try again
+			continue
 		fi
-	fi
 
-	rm -f "$LINK"
+		# Check for a boring thumbnail (i.e. mostly the same color)
+		COLORS=8
+		COUNT=$(convert "$NEW" +dither -colors "$COLORS" -unique-colors txt: | grep -v '^#' | wc -l)
+		if [ $COUNT -ge $COLORS ] ; then
+			# Good colors, stop.
+			break
+		fi
+	done
+
+
+	# Take whatever we had at the last attempt, if possible.
+	if [ -e "$NEW" ]; then
+		echo "$@: using frame $frame" >> "$LOG"
+	else
+		echo "$@: gave up" >> "$LOG"
+		# Failed to find anything. Don't try again in the future.
+		convert -size 1280x720 xc:black "$NEW"
+	fi
 	mv "$NEW" "$THUMB"
+	rm -f "$LINK"
 }
 
 do_json()
 {
-	ln -sf "$1" "$LINK"
+	ln -sf "$@" "$LINK"
 	if mediainfo --Output=JSON "$LINK" > "$NEW".json ; then
 		mv "$NEW".json "$JSON"
 	fi
@@ -59,10 +71,14 @@ do_json()
 
 if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ]; then
 	do_thumbnail "$MEDIA"
+else
+	echo "$MEDIA: using thumb $THUMB" >> "$LOG"
 fi
 
 if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ]; then
 	do_json "$MEDIA"
+else
+	echo "$MEDIA: using json $JSON" >> "$LOG"
 fi
 
 echo "$THUMB"

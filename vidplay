@@ -1,9 +1,15 @@
 #!/bin/bash
-# If the mpv UI don't launch (detected "VO: " in output), there is no
-# way to map X input into the program to shut it down if it hangs. So
-# kill it after 5 seconds if we don't see it.
+#set -x
+
+# Where to log?
 LOG=~/.cache/playback/mpv.log
 mv -f "$LOG" "$LOG".previous
+# Rotate the thumbnailer log here too.
+THUMBLOG=~/.cache/playback/thumbnailer.log
+mv -f "$THUMBLOG" "$THUMBLOG".previous
+
+# What is our toplevel?
+TOP=$(grep ^toplevel= ~/.config/Outflux/playback-walker.conf | cut -d= -f2-)
 
 #lang=""
 #audio=$(mediainfo --Inform="Audio;:%Language%:" -- "$@")
@@ -27,7 +33,6 @@ lang="--slang=English,eng,en --alang=English,eng,en"
 # since mpv doesn't like Subs/$n_$lang.srt style subtitles, so let's just link it.
 # This uses sub-files-path in ~/.config/mpv/mpv.conf
 # and sub-auto=all to load everything (in filename alphasort order)
-set -x
 
 sublink=~/.cache/playback/subs
 mkdir -p $sublink
@@ -53,9 +58,21 @@ vidfile=$(basename "$vidfull")
 media="$vidlink/$vidfile"
 ln -s "$vidfull" "$media"
 
-# Keep a copy of played videos and its directory in "recent" directory.
+# Add a link to the played videos in "Recent"...
 ln -sf "$vidfull" "$recentlink"/
-ln -sf "$vidpath" "$recentlink"/
+# Add a link to the player video's displayed directory
+# in "Recent" if it wasn't "Recent" itself.
+playdir=$(dirname "$@")
+displaydir="$playdir"
+# Strip toplevel dir from name
+displaydir=${displaydir#$TOP}
+# Strip leading slashes
+displaydir=${displaydir##/}
+bottom=$(dirname "$displaydir")
+if [ "$bottom" != "Recent" ]; then
+	displaydir=$(echo "$displaydir" | sed -e 's/\// - /g')
+	ln -sf "$playdir" "$recentlink"/"$displaydir"
+fi
 # Clean up everything beyond X.. most recent.
 (cd "$recentlink" && ls -1t | tail -n +31 | xargs rm -f)
 
@@ -108,8 +125,9 @@ ls -l $sublink >&2
 #	ln -s "$sub" $sublink/"$base".en.srt
 #fi
 
-# If we don't see mpv initialize the Video Output within 5 seconds,
-# kill it and clean up.
+# If the mpv UI don't launch (detected "VO: " in output), there is no
+# way to map X input into the program to shut it down if it hangs. So
+# kill it after 5 seconds if we don't see it.
 (sleep 5; pkill mpv) &
 killer=$!
 truncate --size 0 "$LOG"
