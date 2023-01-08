@@ -1,13 +1,21 @@
 #!/bin/bash
-CACHE=~/.cache/playback
+CACHE=~/.cache/playback/thumbnails
 EXT=png
 
-HASH=$(echo -n "$1" | sha256sum | awk '{print $1}')
+MEDIA=$(realpath "$1")
+
+HASH=$(echo -n "$MEDIA" | sha256sum | awk '{print $1}')
 INDEX=$(echo "$HASH" | cut -c-2)
 mkdir -p "$CACHE"/$INDEX
 NEW="$CACHE"/$INDEX/$HASH.new.$EXT
 THUMB="$CACHE"/$INDEX/$HASH.$EXT
-BASE_EXT=$(echo "$1" | awk -F. '{print $NF}')
+JSON="$THUMB.json"
+BASE_EXT=$(echo "$MEDIA" | awk -F. '{print $NF}')
+if [ "$BASE_EXT" == "$MEDIA" ]; then
+	# No extension, just give up.
+	echo "Giving up, no extension: $MEDIA" >&2
+	exit 1
+fi
 # TODO: create this safely
 LINK="/tmp/thumbnailer-$$".$BASE_EXT
 
@@ -17,11 +25,12 @@ thumb_frame()
 	mpv "$LINK" --really-quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW"
 }
 
-if [ ! -e "$THUMB" ] || [ "$1" -nt "$THUMB" ]; then
+do_thumbnail()
+{
 	ln -sf "$1" "$LINK"
 	if ! thumb_frame 0 ; then
 		rm -f "$LINK" "$NEW"
-		exit 1
+		return
 	fi
 
 	# Check for a boring thumbnail (i.e. mostly the same color)
@@ -31,20 +40,29 @@ if [ ! -e "$THUMB" ] || [ "$1" -nt "$THUMB" ]; then
 		# Pick a later image?
 		if ! thumb_frame 60 ; then
 			rm -f "$LINK" "$NEW"
-			exit 1
+			return
 		fi
 	fi
 
 	rm -f "$LINK"
 	mv "$NEW" "$THUMB"
-fi
+}
 
-JSON="$THUMB.json"
-if [ ! -e "$JSON" ] || [ "$1" -nt "$JSON" ]; then
+do_json()
+{
 	ln -sf "$1" "$LINK"
 	if mediainfo --Output=JSON "$LINK" > "$NEW".json ; then
 		mv "$NEW".json "$JSON"
 	fi
 	rm -f "$LINK"
+}
+
+if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ]; then
+	do_thumbnail "$MEDIA"
 fi
+
+if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ]; then
+	do_json "$MEDIA"
+fi
+
 echo "$THUMB"

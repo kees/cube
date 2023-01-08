@@ -110,7 +110,7 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     QString path = fs->filePath(index);
 
     currentPath = path;
-    qDebug() << "Highlight changed: " << fs->fileName(index);
+    //qDebug() << "Highlight changed: " << fs->fileName(index);
     ui->statusBar->showMessage(path);
 
     ui->grThumbnail->scene()->clear();
@@ -188,12 +188,15 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     QModelIndex index;
     QVariant data;
     QString text;
+    QString path;
+    QStringList args;
 
     //qDebug() << "key press: " << event->key();
     switch (event->key()) {
     case Qt::Key_Escape:
         QApplication::quit();
         break;
+
     case Qt::Key_Enter:
     case Qt::Key_Return:
     case Qt::Key_Right:
@@ -205,13 +208,11 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         if (fs->isDir(index)) {
             ui->lstFiles->setExpanded(index, true );
         } else {
-            QString path = fs->filePath(index);
-            QString status;
-            QStringList args;
+            path = fs->filePath(index);
 
             args << "--" << path;
 
-            status = "Launching: " + program_player + " " + args.join(" ");
+            QString status = "Launching: " + program_player + " " + args.join(" ");
             qDebug() << status;
             ui->statusBar->showMessage(status);
 
@@ -221,6 +222,21 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         }
 
         break;
+
+    // Remove an item from the recent list
+    case Qt::Key_VolumeMute:
+        index = ui->lstFiles->currentIndex();
+        path = fs->filePath(index);
+
+        qDebug() << "Muting: " << path;
+
+        if (!path.contains("/Recent/"))
+            break;
+
+        args << "--" << path;
+        QProcess::execute("rm", args);
+        break;
+
     default:
         qDebug() << "Unhandled: " << event->key();
         return;
