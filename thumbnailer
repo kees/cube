@@ -24,8 +24,9 @@ if [ ! -e "$THUMB" ] || [ "$1" -nt "$THUMB" ]; then
 	fi
 
 	# Check for a boring thumbnail (i.e. mostly the same color)
-	COLORS=$(convert "$NEW" +dither -colors 5 -unique-colors txt: | grep -v '^#' | wc -l)
-	if [ $COLORS -lt 4 ] ; then
+	COLORS=5
+	COUNT=$(convert "$NEW" +dither -colors "$COLORS" -unique-colors txt: | grep -v '^#' | wc -l)
+	if [ $COUNT -lt $COLORS ] ; then
 		# Pick a later image?
 		if ! thumb_frame 60 ; then
 			rm -f "$LINK" "$NEW"
