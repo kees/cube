@@ -8,6 +8,7 @@ mkdir -p "$CACHE"/$INDEX
 NEW="$CACHE"/$INDEX/$HASH.new.$EXT
 THUMB="$CACHE"/$INDEX/$HASH.$EXT
 BASE_EXT=$(echo "$1" | awk -F. '{print $NF}')
+# TODO: create this safely
 LINK="/tmp/thumbnailer-$$".$BASE_EXT
 
 thumb_frame()
@@ -36,5 +37,14 @@ if [ ! -e "$THUMB" ] || [ "$1" -nt "$THUMB" ]; then
 
 	rm -f "$LINK"
 	mv "$NEW" "$THUMB"
+fi
+
+JSON="$THUMB.json"
+if [ ! -e "$JSON" ] || [ "$1" -nt "$JSON" ]; then
+	ln -sf "$1" "$LINK"
+	if mediainfo --Output=JSON "$LINK" > "$NEW".json ; then
+		mv "$NEW".json "$JSON"
+	fi
+	rm -f "$LINK"
 fi
 echo "$THUMB"

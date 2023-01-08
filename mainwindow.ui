@@ -85,9 +85,23 @@
             <height>0</height>
            </size>
           </property>
-          <property name="textElideMode">
-           <enum>Qt::ElideLeft</enum>
+          <property name="font">
+           <font>
+            <pointsize>40</pointsize>
+           </font>
           </property>
+          <property name="textElideMode">
+           <enum>Qt::ElideNone</enum>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+          <attribute name="horizontalHeaderVisible">
+           <bool>false</bool>
+          </attribute>
+          <attribute name="verticalHeaderVisible">
+           <bool>false</bool>
+          </attribute>
          </widget>
         </item>
        </layout>

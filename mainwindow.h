@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QFileSystemModel>
 #include <QItemSelectionModel>
+#include <QStandardItemModel>
 #include <QtConcurrent/QtConcurrent>
 #include <QGraphicsScene>
 #include <QSettings>
@@ -34,6 +35,8 @@ private:
     Ui::MainWindow *ui;
     QFileSystemModel *fs;
     QItemSelectionModel *fsSelection;
+
+    QStandardItemModel *metadata;
 
     QFutureWatcher<QStringList> *thumbnailer;
 
