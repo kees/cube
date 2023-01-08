@@ -1,0 +1,130 @@
+#!/bin/bash
+# If the mpv UI don't launch (detected "VO: " in output), there is no
+# way to map X input into the program to shut it down if it hangs. So
+# kill it after 5 seconds if we don't see it.
+LOG=~/.cache/playback/mpv.log
+mv -f "$LOG" "$LOG".previous
+
+#lang=""
+#audio=$(mediainfo --Inform="Audio;:%Language%:" -- "$@")
+#if [ "$audio" = "::" ] || echo "$audio" | egrep -iq ":(en|eng|english):" ; then
+#	# We have an english audio track (or exactly 1 unidentified track),
+#	# for Tova's sanity, use it by default and disable subtitles. We
+#	# can switch it around at playback if we want later.
+#	lang="--sid=no --alang=English,eng,en"
+#else
+#	text=$(mediainfo --Inform="Text;:%Language%:" -- "$@")
+#	if echo "$text" | egrep -iq ":(en|eng|english):" ; then
+#		# Otherwise, we should pick english subtitles and
+#		# leave the default audio.
+#		lang="--slang=English,eng,en"
+#	fi
+#fi
+# Now Tova wants subtitles all the time!
+lang="--slang=English,eng,en --alang=English,eng,en"
+
+# Avoid stupidity with subtitle path names and spaces and escaping via symlink,
+# since mpv doesn't like Subs/$n_$lang.srt style subtitles, so let's just link it.
+# This uses sub-files-path in ~/.config/mpv/mpv.conf
+# and sub-auto=all to load everything (in filename alphasort order)
+set -x
+
+sublink=~/.cache/playback/subs
+mkdir -p $sublink
+rm -f $sublink/*
+
+vidlink=~/.cache/playback/vid
+mkdir -p $vidlink
+rm -f $vidlink/*
+
+recentlink=~/.cache/playback/recent
+mkdir -p $recentlink
+
+# We need to play videos in a isolated directory, because we use
+# mpv's "try all possible subtitles" option, which will pick subs
+# from unrelated files. All sub-selection logic needs to be built
+# into this script directly.
+if [ "$1" = "--" ]; then
+	shift
+fi
+vidfull=$(realpath "$@")
+vidpath=$(dirname "$vidfull")
+vidfile=$(basename "$vidfull")
+media="$vidlink/$vidfile"
+ln -s "$vidfull" "$media"
+
+# Keep a copy of played videos in "recent" directory.
+ln -sf "$vidfull" "$recentlink"/
+# Clean up everything beyond X.. most recent.
+(cd "$recentlink" && ls -1t | tail -n +31 | xargs rm -f)
+
+ext=$(echo "$vidfile" | awk -F. '{print $NF}')
+vidbase=$(basename "$vidfile" ".$ext")
+
+oldIFS="$IFS"
+IFS=$'\n'
+count=1
+# Put the English subs first, with the largest at the start,
+# under the assumption that the larger will be the hearing-impaired.
+for sub in $(ls -S1 \
+		"$vidpath/Subs/"*"_Eng"*".srt" \
+		"$vidpath/Subs/$vidbase/"*"_Eng"*".srt" \
+	     2>/dev/null); do
+	base=$(basename "$sub")
+	ln -s "$sub" $sublink/$(printf %02d $count)-"$base"
+	count=$(( count + 1 ))
+done
+# Put basename-matching subs from the same directory next, ordered
+# by preferred language.
+for subext in vtt srt sub; do
+	for sub in $(ls -1 \
+		"$vidpath/${vidbase}".en_US."$subext" \
+		"$vidpath/${vidbase}".en."$subext" \
+		"$vidpath/${vidbase}".en_*."$subext" \
+		"$vidpath/${vidbase}".*."$subext" \
+		"$vidpath/${vidbase}"."$subext" \
+		| perl -ne '$seen{$_}++ or print;'); do
+		if [ -e "$sub" ]; then
+			base=$(basename "$sub")
+			ln -s "$sub" $sublink/$(printf %02d $count)-"$base"
+			count=$(( count + 1 ))
+		fi
+	done
+done
+# Add everything else from the Subs subdirectory with equal priority.
+for sub in $(ls -1 "$vidpath/Subs/"* 2>/dev/null | sort | grep -v 'Subs/.*_Eng.*\.srt$'); do
+	base=$(basename "$sub")
+	ln -s "$sub" $sublink/99-"$base"
+done
+IFS="$oldIFS"
+ls -l $vidlink >&2
+ls -l $sublink >&2
+
+## Choose the largest English SRT file (likely the hearing-impared one)
+#sub=$(ls -S1 "$vidpath/Subs/"*"_Eng"*".srt" 2>/dev/null | head -n1)
+#if [ -r "$sub" ]; then
+#	# This uses sub-files-path in ~/.config/mpv/mpv.conf
+#	ln -s "$sub" $sublink/"$base".en.srt
+#fi
+
+# If we don't see mpv initialize the Video Output within 5 seconds,
+# kill it and clean up.
+(sleep 5; pkill mpv) &
+killer=$!
+truncate --size 0 "$LOG"
+(if tail -f "$LOG" | grep -q -m1 '^VO: ' ; then
+	kill $killer
+fi) &
+
+# Prepare an IPC socket for remote command control.
+socket=~/.cache/playback/mpv-socket
+/usr/bin/mpv --input-ipc-server="$socket" --quiet --fs $lang -- "$media" 2>&1 | tee -a "$LOG" &
+mpv_pid=$!
+
+# Let the video cache, start, and initialize audio on the stereo, then
+# unpause it. (It starts paused from "pause=yes" in ~/.config/mpv/mpv.conf)
+sleep 0.5
+(sleep 0.5;
+ echo '{ "command": ["set_property", "pause", false] }') | \
+	socat - "$socket" &
+wait $mpv_pid
