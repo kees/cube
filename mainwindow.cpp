@@ -43,6 +43,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->tblMetadata->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->tblMetadata->horizontalHeader()->setVisible(false);
     ui->tblMetadata->verticalHeader()->setVisible(false);
+    ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: 5px; }"));
 
     // Prepare selections
     fsSelection = new QItemSelectionModel(fs);
