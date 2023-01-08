@@ -43,7 +43,6 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->tblMetadata->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     ui->tblMetadata->horizontalHeader()->setVisible(false);
     ui->tblMetadata->verticalHeader()->setVisible(false);
-    ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: 5px; }"));
 
     // Prepare selections
     fsSelection = new QItemSelectionModel(fs);
@@ -249,6 +248,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
         size /= 2;
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
     qDebug() << "metadata font size: " << size;
+
+    // scale margins by font size
+    ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: %1px; }").arg(size / 4));
 }
 
 void MainWindow::thumbnailReady(int num)
@@ -328,10 +330,10 @@ void MainWindow::thumbnailReady(int num)
                     QString duration = "";
 
                     if (hours > 0)
-                        duration += QString::asprintf("%d:", hours);
+                        duration += QString::asprintf("%dh", hours);
                     if (minutes > 0 || hours > 0)
-                        duration += QString::asprintf(hours > 0 ? "%02d:" : "%d:", minutes);
-                    duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02d" : "%d", seconds);
+                        duration += QString::asprintf(hours > 0 ? "%02dm" : "%dm", minutes);
+                    duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02ds" : "%ds", seconds);
 
                     qDebug() << "Duration: " + duration;
 
@@ -343,13 +345,16 @@ void MainWindow::thumbnailReady(int num)
             }
             if (info["@type"] == "Video") {
                 QString video = info["Format"].toString();
-                QString fps = info["FrameRate"].toString();
+                // Strip out "Visual" from "MPEG-4 Visual"
+                if (video.endsWith(" Visual"))
+                    video.chop(7);
 
+                QString fps = info["FrameRate"].toString();
                 // Remove trailing zeros
-                while (fps.endsWith("0") || fps.endsWith("."))
+                while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
                     fps.chop(1);
 
-                QString details = info["Width"].toString() + "x" + info["Height"].toString() + "@" + fps + "fps";
+                QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
                 qDebug() << details;
                 row.clear();
                 row.append(new QStandardItem(video));
@@ -376,9 +381,19 @@ void MainWindow::thumbnailReady(int num)
             }
             if (info["@type"] == "Text") {
                 qDebug() << "Subs lang: " + info["Language"].toString();
+
+                QString lang;
+                if (info["Language"].isString())
+                    lang = info["Language"].toString();
+                else
+                    lang = "unspecified";
+
+                if (info["Title"].isString())
+                    lang += QString(" (%1)").arg(info["Title"].toString());
+
                 row.clear();
                 row.append(new QStandardItem("Subtitles"));
-                row.append(new QStandardItem(info["Language"].toString()));
+                row.append(new QStandardItem(lang));
                 metadata->appendRow(row);
             }
         }
