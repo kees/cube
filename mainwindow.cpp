@@ -311,32 +311,72 @@ void MainWindow::thumbnailReady(int num)
         QJsonArray track = json["track"].toArray();
         for (int i=0; i < track.count(); i++) {
             QJsonObject info = track[i].toObject();
-            if (info["@type"] == "General" && info["Duration"].isString()) {
-                qDebug() << "Duration: " + info["Duration"].toString();
-
+            if (info["@type"] == "General") {
                 row.clear();
-                row.append(new QStandardItem("Duration"));
-                row.append(new QStandardItem(info["Duration"].toString()));
+                row.append(new QStandardItem("Format"));
+                row.append(new QStandardItem(info["Format"].toString()));
                 metadata->appendRow(row);
+
+                if (info["Duration"].isString()) {
+                    int seconds = info["Duration"].toString().toFloat();
+                    int hours = seconds / 3600;
+                    seconds %= 3600;
+                    int minutes = seconds / 60;
+                    seconds %= 60;
+
+                    QString duration = "";
+
+                    if (hours > 0)
+                        duration += QString::asprintf("%d:", hours);
+                    if (minutes > 0 || hours > 0)
+                        duration += QString::asprintf(hours > 0 ? "%02d:" : "%d:", minutes);
+                    duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02d" : "%d", seconds);
+
+                    qDebug() << "Duration: " + duration;
+
+                    row.clear();
+                    row.append(new QStandardItem("Duration"));
+                    row.append(new QStandardItem(duration));
+                    metadata->appendRow(row);
+                }
             }
             if (info["@type"] == "Video") {
-                qDebug() << info["Width"].toString() + "x" + info["Height"].toString() + "@" + info["FrameRate"].toString() + "fps";
+                QString video = info["Format"].toString();
+                QString fps = info["FrameRate"].toString();
+
+                // Remove trailing zeros
+                while (fps.endsWith("0") || fps.endsWith("."))
+                    fps.chop(1);
+
+                QString details = info["Width"].toString() + "x" + info["Height"].toString() + "@" + fps + "fps";
+                qDebug() << details;
                 row.clear();
-                row.append(new QStandardItem("Video"));
-                row.append(new QStandardItem(info["Width"].toString() + "x" + info["Height"].toString() + "@" + info["FrameRate"].toString() + "fps"));
+                row.append(new QStandardItem(video));
+                row.append(new QStandardItem(details));
                 metadata->appendRow(row);
             }
             if (info["@type"] == "Audio") {
                 qDebug() << info["Format"].toString() + ": " + info["ChannelPositions"].toString();
+
+                QString audio = info["Format"].toString();
+                if (info["Language"].isString())
+                    audio += QString(" (%1)").arg(info["Language"].toString());
+
+                QString channels;
+                if (info["ChannelPositions"].isString())
+                    channels = info["ChannelPositions"].toString();
+                else
+                    channels = info["Channels"].toString();
+
                 row.clear();
-                row.append(new QStandardItem("Audio"));
-                row.append(new QStandardItem(info["Format"].toString() + ": " + info["ChannelPositions"].toString()));
+                row.append(new QStandardItem(audio));
+                row.append(new QStandardItem(channels));
                 metadata->appendRow(row);
             }
             if (info["@type"] == "Text") {
                 qDebug() << "Subs lang: " + info["Language"].toString();
                 row.clear();
-                row.append(new QStandardItem("Sub lang"));
+                row.append(new QStandardItem("Subtitles"));
                 row.append(new QStandardItem(info["Language"].toString()));
                 metadata->appendRow(row);
             }
