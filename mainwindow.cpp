@@ -126,7 +126,10 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
         heading = halves[1];
 
     if (fs->isDir(index)) {
+        // Draw window heading
         ui->lblDirectory->setText(heading);
+        // Move update tracking to this directory, for what it's worth (slow on NFS).
+        fs->setRootPath(path);
         return;
     }
 
