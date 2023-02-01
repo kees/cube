@@ -104,9 +104,24 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+void MainWindow::moveWatcher(const QModelIndex &index)
+{
+    QString path = fs->filePath(index);
+
+    // Move filesystem watcher into target.
+    fs->setRootPath(path);
+    //qDebug() << "Flip Watching: " << path;
+
+    // Then move filesystem watcher back up to parent, to force a refresh (inotify doesn't work on NFS).
+    QString dir = path;
+    dir = path.left(path.lastIndexOf("/"));
+    fs->setRootPath(dir);
+    //qDebug() << "Flop Watching: " << dir;
+}
+
 void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItemSelection &deselected)
 {
-    QModelIndex index = ui->lstFiles->currentIndex();
+    const QModelIndex index = ui->lstFiles->currentIndex();
     QString path = fs->filePath(index);
 
     currentPath = path;
@@ -116,7 +131,6 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     ui->grThumbnail->scene()->clear();
     metadata->clear();
 
-    QString dir = path;
     QString heading;
 
     QStringList halves = path.split(toplevel + "/");
@@ -125,17 +139,20 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     else
         heading = halves[1];
 
+    currentIndex = index;
+
     if (fs->isDir(index)) {
         // Draw window heading
         ui->lblDirectory->setText(heading);
-        // Move update tracking to this directory, for what it's worth (slow on NFS).
-        fs->setRootPath(path);
         return;
     }
 
-    dir = path.left(path.lastIndexOf("/"));
     ui->lblDirectory->setText(heading.left(heading.lastIndexOf("/")));
+    currentFile = path;
+}
 
+void MainWindow::thumbnailRequest(QString &path)
+{
     // Request thumbnail
     QString program = program_thumbnailer;
     std::function<QStringList(const QString&)> thumbnail = [program](const QString &imageFileName) {
@@ -184,6 +201,8 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
 void MainWindow::FileSystemExpanded(const QModelIndex &index)
 {
     qDebug() << "Expanded: " << fs->fileName(index);
+
+    this->moveWatcher(index);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
@@ -210,6 +229,7 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         // Expand a chosen directory
         if (fs->isDir(index)) {
             ui->lstFiles->setExpanded(index, true );
+
         } else {
             path = fs->filePath(index);
 
@@ -241,10 +261,38 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         break;
 
     default:
-        qDebug() << "Unhandled: " << event->key();
+        qDebug() << "Unhandled keyPress: " << event->key();
+        event->ignore();
         return;
     }
     event->accept();
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    switch (event->key()) {
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+        /* Only request a directory refresh when we've come to a stop in a single position. */
+        if (!event->isAutoRepeat()) {
+            this->moveWatcher(currentIndex);
+        }
+        break;
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+        /* Only request a thumbnail/refresh when we've come to a stop in a single position. */
+        if (!event->isAutoRepeat()) {
+            this->thumbnailRequest(currentPath);
+            this->moveWatcher(currentIndex);
+        }
+        break;
+    default:
+        //qDebug() << "unhandled keyRelease: " << event->key() << " is repeat: " << event->isAutoRepeat();
+        event->ignore();
+        return;
+    }
+
+    event->accept(); /* ??? */
 }
 
 void MainWindow::resizeEvent(QResizeEvent *event)
@@ -336,7 +384,36 @@ void MainWindow::thumbnailReady(int num)
             if (info["@type"] == "General" && info["Format"].isString()) {
                 row.clear();
                 row.append(new QStandardItem("Format "));
-                row.append(new QStandardItem(info["Format"].toString()));
+                QString format = info["Format"].toString();
+                size_t size = info["FileSize"].toString().toFloat();
+                size_t divider = 1;
+                QString si = "B";
+
+                if (size > 1024 * divider) {
+                    si = "KiB";
+                    divider *= 1024;
+                }
+                if (size > 1024 * divider) {
+                    si = "MiB";
+                    divider *= 1024;
+                }
+                if (size > 1024 * divider) {
+                    si = "GiB";
+                    divider *= 1024;
+                }
+                size_t whole = size;
+                size_t tenths = 0;
+                if (divider > 10) {
+                    whole = size / (divider / 10);
+                    tenths = whole % 10;
+                    whole /= 10;
+                }
+                format += QString(" (%1").arg(whole);
+                if (tenths != 0)
+                    format += QString(".%1").arg(tenths);
+                format += QString("%1)").arg(si);
+
+                row.append(new QStandardItem(format));
                 metadata->appendRow(row);
 
                 if (info["Duration"].isString()) {

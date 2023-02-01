@@ -22,14 +22,17 @@ public:
     ~MainWindow();
 
     void keyPressEvent(QKeyEvent *event);
+    void keyReleaseEvent(QKeyEvent *event);
     void resizeEvent(QResizeEvent *event);
 
 private slots:
     void FileSystemHighlight(const QItemSelection &selected, const QItemSelection &deselected);
     void FileSystemExpanded(const QModelIndex &index);
 
+    void thumbnailRequest(QString &path);
     void thumbnailReady(int num);
     void thumbnailerIdle();
+    void moveWatcher(const QModelIndex &index);
 
 private:
     Ui::MainWindow *ui;
@@ -44,6 +47,8 @@ private:
     QString program_player;
     QString program_thumbnailer;
 
+    QModelIndex currentIndex;
+    QString currentFile;
     QString currentPath;
 };
 
