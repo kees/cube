@@ -5,9 +5,11 @@
 #include <QFileSystemModel>
 #include <QItemSelectionModel>
 #include <QStandardItemModel>
-#include <QtConcurrent/QtConcurrent>
 #include <QGraphicsScene>
 #include <QSettings>
+#include <QSet>
+
+QT_FORWARD_DECLARE_CLASS(QProcess)
 
 namespace Ui {
 class MainWindow;
@@ -30,18 +32,27 @@ private slots:
     void FileSystemExpanded(const QModelIndex &index);
 
     void thumbnailRequest(QString &path);
-    void thumbnailReady(int num);
-    void thumbnailerIdle();
     void moveWatcher(const QModelIndex &index);
 
 private:
+    void thumbnailStartNext();
+    void thumbnailDisplay(const QString &thumbnail);
+
     Ui::MainWindow *ui;
     QFileSystemModel *fs;
     QItemSelectionModel *fsSelection;
 
     QStandardItemModel *metadata;
 
-    QFutureWatcher<QStringList> *thumbnailer;
+    // LIFO queue of pending thumbnail paths (back = most recent). Up to
+    // thumbnailMaxConcurrent subprocesses run at once (sized to the CPU
+    // count); as each finishes, the most recently requested entry is popped
+    // and started. Dedup on path means at most one pending/in-flight request
+    // per unique file.
+    QStringList thumbnailQueue;
+    QList<QProcess *> thumbnailProcs;
+    QSet<QString> thumbnailsInFlight;
+    int thumbnailMaxConcurrent;
 
     QString toplevel;
     QString program_player;

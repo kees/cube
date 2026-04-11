@@ -5,10 +5,14 @@
 #include <QProcess>
 #include <QBrush>
 #include <QDebug>
+#include <QTimer>
+#include <QThread>
 
 #include <QFileIconProvider>
 
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #include <unistd.h>
 
@@ -76,9 +80,10 @@ MainWindow::MainWindow(QWidget *parent) :
     //ui->lstFiles->font().setPointSize(20);
     //qDebug() << "Font size: " << ui->lstFiles->font().pointSize();
 
-    thumbnailer = new QFutureWatcher<QStringList>(this);
-    connect(thumbnailer, &QFutureWatcher<QStringList>::resultReadyAt, this, &MainWindow::thumbnailReady);
-    connect(thumbnailer, &QFutureWatcher<QStringList>::finished, this, &MainWindow::thumbnailerIdle);
+    thumbnailMaxConcurrent = QThread::idealThreadCount();
+    if (thumbnailMaxConcurrent < 1)
+        thumbnailMaxConcurrent = 1;
+    qDebug() << "thumbnailer concurrency: " << thumbnailMaxConcurrent;
 
     // Prepare thumbnail area
     ui->grThumbnail->setScene(new QGraphicsScene());
@@ -93,9 +98,17 @@ MainWindow::MainWindow(QWidget *parent) :
 
 MainWindow::~MainWindow()
 {
-    thumbnailer->cancel();
-    thumbnailer->waitForFinished();
-    delete thumbnailer;
+    thumbnailQueue.clear();
+    // Disconnect first so the finished() lambda doesn't run against
+    // half-destroyed member containers while we're tearing them down.
+    for (QProcess *proc : thumbnailProcs) {
+        proc->disconnect(this);
+        proc->kill();
+        proc->waitForFinished();
+        delete proc;
+    }
+    thumbnailProcs.clear();
+    thumbnailsInFlight.clear();
 
     delete ui->grThumbnail->scene();
     delete fsSelection;
@@ -153,49 +166,71 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
 
 void MainWindow::thumbnailRequest(QString &path)
 {
-    // Request thumbnail
-    QString program = program_thumbnailer;
-    std::function<QStringList(const QString&)> thumbnail = [program](const QString &imageFileName) {
-        QProcess thumbnailerProcess;
-        QStringList tuple;
-        QStringList params;
-        bool okay;
-        int exitcode;
-        //static int count = 0;
+    // Dedup: if this exact file is already being generated, nothing to do.
+    if (thumbnailsInFlight.contains(path))
+        return;
 
-        tuple.append(imageFileName);
+    // Dedup: drop any earlier queue entry for the same file so the most
+    // recent request is the one that determines its LIFO priority.
+    thumbnailQueue.removeAll(path);
 
-        //qDebug() << "getting thumbnail for " << imageFileName;
-        params.append(imageFileName);
-        //qDebug() << "launching " << count++ << program << " " << params.join(" ");
-        thumbnailerProcess.start(program, params);
-        okay = thumbnailerProcess.waitForFinished(100000);
-        exitcode = thumbnailerProcess.exitCode();
-        if (!okay || exitcode) {
-            if (exitcode == 0) {
-                qDebug() << "thumbnailer timed out";
+    // LIFO: newest request goes to the back; thumbnailStartNext() pops from
+    // the back so the most temporally recent request runs next.
+    thumbnailQueue.append(path);
+
+    qDebug() << "want thumbnail for " << path << " (queue depth " << thumbnailQueue.size() << ")";
+
+    thumbnailStartNext();
+}
+
+void MainWindow::thumbnailStartNext()
+{
+    while (thumbnailProcs.size() < thumbnailMaxConcurrent && !thumbnailQueue.isEmpty()) {
+        // LIFO: take the most recently requested entry.
+        const QString mediaPathName = thumbnailQueue.takeLast();
+        const QStringList args = QStringList() << mediaPathName;
+
+        QProcess *proc = new QProcess(this);
+        thumbnailProcs.append(proc);
+        thumbnailsInFlight.insert(mediaPathName);
+
+        connect(proc, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                this, [this, proc, mediaPathName](int exitCode, QProcess::ExitStatus status) {
+            thumbnailProcs.removeOne(proc);
+            thumbnailsInFlight.remove(mediaPathName);
+            proc->deleteLater();
+
+            if (status != QProcess::NormalExit || exitCode != 0) {
+                qDebug() << "thumbnailer failed for " << mediaPathName
+                         << " exit " << exitCode << " status " << status
+                         << " stderr: " << proc->readAllStandardError();
             } else {
-                qDebug() << "thumbnailer failed: " << exitcode;
-                qDebug() << "thumbnailer stderr: " << thumbnailerProcess.readAllStandardError();
+                //qDebug() << "thumbnailer stderr: " << proc->readAllStandardError();
+                QString thumbnail = QString::fromUtf8(proc->readAllStandardOutput()).split('\n').value(0);
+                qDebug() << "thumbnailer done with " << mediaPathName << " got " << thumbnail;
+
+                qDebug() << "current:" << currentPath << " path:" << mediaPathName;
+                if (!thumbnail.isEmpty() && currentPath == mediaPathName)
+                    thumbnailDisplay(thumbnail);
             }
-            tuple.append("");
-            return tuple;
-        }
 
-        QString thumbnail(thumbnailerProcess.readAllStandardOutput());
-        thumbnail = thumbnail.split("\n")[0];
-        //qDebug() << "thumbnailer done with " << imageFileName << " got " << thumbnail;
+            thumbnailStartNext();
+        });
 
-        tuple.append(thumbnail);
-        return tuple;
-    };
+        qDebug() << "launching " << program_thumbnailer << " " << args.join(" ")
+                 << " (" << thumbnailProcs.size() << "/" << thumbnailMaxConcurrent << ")";
+        proc->start(program_thumbnailer, args);
 
-    QStringList files;
-    files.append(path);
-
-    // Use mapped to run the thread safe scale function on the files.
-    qDebug() << "want thumbnail for " << path;
-    thumbnailer->setFuture(QtConcurrent::mapped(files, thumbnail));
+        // Match the old waitForFinished(100000) behaviour: kill any thumbnailer
+        // that runs longer than 100s. The finished() handler will still fire
+        // (with CrashExit) and clean up via deleteLater.
+        QTimer::singleShot(100000, proc, [proc, mediaPathName]() {
+            if (proc->state() != QProcess::NotRunning) {
+                qDebug() << "thumbnailer timed out for " << mediaPathName;
+                proc->kill();
+            }
+        });
+    }
 }
 
 void MainWindow::FileSystemExpanded(const QModelIndex &index)
@@ -323,187 +358,158 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     ui->tblMetadata->setTextElideMode(Qt::ElideNone);
 }
 
-void MainWindow::thumbnailReady(int num)
+void MainWindow::thumbnailDisplay(const QString &thumbnail)
 {
-    QStringList tuple;
-    QString path, thumbnail;
+    qDebug() << "want to show " << thumbnail;
 
-    tuple = thumbnailer->resultAt(num);
-    path = tuple[0];
-    thumbnail = tuple[1];
+    QImage image(thumbnail);
 
-    if (thumbnail == "")
-        return;
+    // Build a new scene because nothing seems to actually work to recenter the image. :(
+    QGraphicsScene *old = ui->grThumbnail->scene();
+    QGraphicsScene *scene = new QGraphicsScene();
+    ui->grThumbnail->setScene(scene);
+    delete old;
 
-    qDebug() << "Thumbnail for " << path << " ready: " << thumbnail;
+    scene->addPixmap(QPixmap::fromImage(image));
+    ui->grThumbnail->fitInView(image.rect(), Qt::KeepAspectRatio);
+    ui->grThumbnail->centerOn(scene->items()[0]);
 
-    qDebug() << "current:" << currentPath << " path:" << path;
-    if (currentPath == path) {
-        qDebug() << "want to show " << thumbnail;
-        /*
-        QGraphicsPixmapItem image(QPixmap((thumbnail)));
-        scene.clear();
-        scene.addItem(image);
-        */
+    /* Media info JSON */
+    QString json_path = thumbnail + ".json";
+    QFile json_file;
+    QByteArray json_bytes;
 
-        //ui->grThumbnail->setBackgroundBrush(QImage(thumbnail));
+    json_file.setFileName(json_path);
+    json_file.open(QIODevice::ReadOnly | QIODevice::Text);
+    json_bytes = json_file.readAll();
+    json_file.close();
 
-        QImage image(thumbnail);
-        ui->grThumbnail->scene()->clear();
+    QJsonDocument doc = QJsonDocument::fromJson(json_bytes);
+    QJsonObject json = doc.object().value("media").toObject();
 
-        // Build a new scene because nothing seems to actually work to recenter the image. :(
-        QGraphicsScene *old = ui->grThumbnail->scene();
-        QGraphicsScene *scene = new QGraphicsScene();
-        ui->grThumbnail->setScene(scene);
-        delete old;
+    //qDebug() << "mediainfo for " << path << " ready: " << json;
 
-        ui->grThumbnail->scene()->addPixmap(QPixmap::fromImage(image));
-        ui->grThumbnail->fitInView(image.rect(), Qt::KeepAspectRatio);
-        ui->grThumbnail->centerOn(ui->grThumbnail->scene()->items()[0]);
+    QList<QStandardItem *> row;
+    //row.append(new QStandardItem("Filename"));
+    //row.append(new QStandardItem(path));
+    //metadata->appendRow(row);
 
-        /* Media info JSON */
-        QString json_path = thumbnail + ".json";
-        QFile json_file;
-        QByteArray json_bytes;
+    QJsonArray track = json["track"].toArray();
+    for (int i=0; i < track.count(); i++) {
+        QJsonObject info = track[i].toObject();
+        if (info["@type"] == "General" && info["Format"].isString()) {
+            row.clear();
+            row.append(new QStandardItem("Format "));
+            QString format = info["Format"].toString();
+            size_t size = info["FileSize"].toString().toFloat();
+            size_t divider = 1;
+            QString si = "B";
 
-        json_file.setFileName(json_path);
-        json_file.open(QIODevice::ReadOnly | QIODevice::Text);
-        json_bytes = json_file.readAll();
-        json_file.close();
-
-        QJsonDocument doc = QJsonDocument::fromJson(json_bytes);
-        QJsonObject json = doc.object().value("media").toObject();
-
-        //qDebug() << "mediainfo for " << path << " ready: " << json;
-
-        QList<QStandardItem *> row;
-        //row.append(new QStandardItem("Filename"));
-        //row.append(new QStandardItem(path));
-        //metadata->appendRow(row);
-
-        QJsonArray track = json["track"].toArray();
-        for (int i=0; i < track.count(); i++) {
-            QJsonObject info = track[i].toObject();
-            if (info["@type"] == "General" && info["Format"].isString()) {
-                row.clear();
-                row.append(new QStandardItem("Format "));
-                QString format = info["Format"].toString();
-                size_t size = info["FileSize"].toString().toFloat();
-                size_t divider = 1;
-                QString si = "B";
-
-                if (size > 1024 * divider) {
-                    si = "KiB";
-                    divider *= 1024;
-                }
-                if (size > 1024 * divider) {
-                    si = "MiB";
-                    divider *= 1024;
-                }
-                if (size > 1024 * divider) {
-                    si = "GiB";
-                    divider *= 1024;
-                }
-                size_t whole = size;
-                size_t tenths = 0;
-                if (divider > 10) {
-                    whole = size / (divider / 10);
-                    tenths = whole % 10;
-                    whole /= 10;
-                }
-                format += QString(" (%1").arg(whole);
-                if (tenths != 0)
-                    format += QString(".%1").arg(tenths);
-                format += QString("%1)").arg(si);
-
-                row.append(new QStandardItem(format));
-                metadata->appendRow(row);
-
-                if (info["Duration"].isString()) {
-                    int seconds = info["Duration"].toString().toFloat();
-                    int hours = seconds / 3600;
-                    seconds %= 3600;
-                    int minutes = seconds / 60;
-                    seconds %= 60;
-
-                    QString duration = "";
-
-                    if (hours > 0)
-                        duration += QString::asprintf("%dh", hours);
-                    if (minutes > 0 || hours > 0)
-                        duration += QString::asprintf(hours > 0 ? "%02dm" : "%dm", minutes);
-                    duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02ds" : "%ds", seconds);
-
-                    qDebug() << "Duration: " + duration;
-
-                    row.clear();
-                    row.append(new QStandardItem("Duration "));
-                    row.append(new QStandardItem(duration));
-                    metadata->appendRow(row);
-                }
+            if (size > 1024 * divider) {
+                si = "KiB";
+                divider *= 1024;
             }
-            if (info["@type"] == "Video") {
-                QString video = info["Format"].toString();
-                // Strip out "Visual" from "MPEG-4 Visual"
-                if (video.endsWith(" Visual"))
-                    video.chop(7);
-
-                QString fps = info["FrameRate"].toString();
-                // Remove trailing zeros
-                while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
-                    fps.chop(1);
-
-                QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
-                qDebug() << details;
-
-                row.clear();
-                row.append(new QStandardItem(video + " "));
-                row.append(new QStandardItem(details));
-                metadata->appendRow(row);
+            if (size > 1024 * divider) {
+                si = "MiB";
+                divider *= 1024;
             }
-            if (info["@type"] == "Audio") {
-                qDebug() << info["Format"].toString() + ": " + info["ChannelPositions"].toString();
-
-                QString audio = info["Format"].toString();
-                if (info["Language"].isString())
-                    audio += QString(" (%1)").arg(info["Language"].toString());
-
-                QString channels;
-                if (info["ChannelPositions"].isString())
-                    channels = info["ChannelPositions"].toString();
-                else if (info["Channels"].isString())
-                    channels = info["Channels"].toString();
-                else
-                    channels = "2"; // assume missing channel count is in stereo
-
-                row.clear();
-                row.append(new QStandardItem(audio + " "));
-                row.append(new QStandardItem(channels));
-                metadata->appendRow(row);
+            if (size > 1024 * divider) {
+                si = "GiB";
+                divider *= 1024;
             }
-            if (info["@type"] == "Text") {
-                qDebug() << "Subs lang: " + info["Language"].toString();
+            size_t whole = size;
+            size_t tenths = 0;
+            if (divider > 10) {
+                whole = size / (divider / 10);
+                tenths = whole % 10;
+                whole /= 10;
+            }
+            format += QString(" (%1").arg(whole);
+            if (tenths != 0)
+                format += QString(".%1").arg(tenths);
+            format += QString("%1)").arg(si);
 
-                QString lang;
-                if (info["Language"].isString())
-                    lang = info["Language"].toString();
-                else
-                    lang = "unspecified";
+            row.append(new QStandardItem(format));
+            metadata->appendRow(row);
 
-                if (info["Title"].isString())
-                    lang += QString(" (%1)").arg(info["Title"].toString());
+            if (info["Duration"].isString()) {
+                int seconds = info["Duration"].toString().toFloat();
+                int hours = seconds / 3600;
+                seconds %= 3600;
+                int minutes = seconds / 60;
+                seconds %= 60;
+
+                QString duration = "";
+
+                if (hours > 0)
+                    duration += QString::asprintf("%dh", hours);
+                if (minutes > 0 || hours > 0)
+                    duration += QString::asprintf(hours > 0 ? "%02dm" : "%dm", minutes);
+                duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02ds" : "%ds", seconds);
+
+                qDebug() << "Duration: " + duration;
 
                 row.clear();
-                row.append(new QStandardItem("Subtitles "));
-                row.append(new QStandardItem(lang));
+                row.append(new QStandardItem("Duration "));
+                row.append(new QStandardItem(duration));
                 metadata->appendRow(row);
             }
         }
+        if (info["@type"] == "Video") {
+            QString video = info["Format"].toString();
+            // Strip out "Visual" from "MPEG-4 Visual"
+            if (video.endsWith(" Visual"))
+                video.chop(7);
+
+            QString fps = info["FrameRate"].toString();
+            // Remove trailing zeros
+            while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
+                fps.chop(1);
+
+            QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
+            qDebug() << details;
+
+            row.clear();
+            row.append(new QStandardItem(video + " "));
+            row.append(new QStandardItem(details));
+            metadata->appendRow(row);
+        }
+        if (info["@type"] == "Audio") {
+            qDebug() << info["Format"].toString() + ": " + info["ChannelPositions"].toString();
+
+            QString audio = info["Format"].toString();
+            if (info["Language"].isString())
+                audio += QString(" (%1)").arg(info["Language"].toString());
+
+            QString channels;
+            if (info["ChannelPositions"].isString())
+                channels = info["ChannelPositions"].toString();
+            else if (info["Channels"].isString())
+                channels = info["Channels"].toString();
+            else
+                channels = "2"; // assume missing channel count is in stereo
+
+            row.clear();
+            row.append(new QStandardItem(audio + " "));
+            row.append(new QStandardItem(channels));
+            metadata->appendRow(row);
+        }
+        if (info["@type"] == "Text") {
+            qDebug() << "Subs lang: " + info["Language"].toString();
+
+            QString lang;
+            if (info["Language"].isString())
+                lang = info["Language"].toString();
+            else
+                lang = "unspecified";
+
+            if (info["Title"].isString())
+                lang += QString(" (%1)").arg(info["Title"].toString());
+
+            row.clear();
+            row.append(new QStandardItem("Subtitles "));
+            row.append(new QStandardItem(lang));
+            metadata->appendRow(row);
+        }
     }
-
-}
-
-void MainWindow::thumbnailerIdle()
-{
-    qDebug() << "Thumbnailer idle";
 }
