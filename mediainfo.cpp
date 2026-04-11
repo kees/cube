@@ -102,9 +102,32 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             if (info["Language"].isString())
                 audio += QString(" (%1)").arg(info["Language"].toString());
 
+            // Fallback chain for the channel description:
+            //   1. ChannelPositions_Original  — canonical position groups,
+            //      describing the actual audio content before any downmix.
+            //      mediainfo fills this in for AC-3/E-AC-3/DTS tracks where
+            //      the base Channels field reports the bit-stream's downmix
+            //      target ("2") rather than the real 5.1 layout.
+            //   2. ChannelPositions           — same format, for tracks
+            //      where there's no downmix distinction.
+            //   3. ChannelLayout_Original     — terser "L R C LFE Ls Rs"
+            //      form; some containers emit this instead of Positions.
+            //   4. ChannelLayout              — same, base variant.
+            //   5. Channels_Original          — raw count, real.
+            //   6. Channels                   — raw count, possibly wrong
+            //      (e.g. "2" for an AC-3 5.1 stream).
+            //   7. "2 (presumed)"             — no channel info at all.
             QString channels;
-            if (info["ChannelPositions"].isString())
+            if (info["ChannelPositions_Original"].isString())
+                channels = info["ChannelPositions_Original"].toString();
+            else if (info["ChannelPositions"].isString())
                 channels = info["ChannelPositions"].toString();
+            else if (info["ChannelLayout_Original"].isString())
+                channels = info["ChannelLayout_Original"].toString();
+            else if (info["ChannelLayout"].isString())
+                channels = info["ChannelLayout"].toString();
+            else if (info["Channels_Original"].isString())
+                channels = info["Channels_Original"].toString();
             else if (info["Channels"].isString())
                 channels = info["Channels"].toString();
             else

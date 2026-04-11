@@ -55,6 +55,10 @@ private slots:
     // --- Audio: language, channel-position fallback chain ---
     void audio_languageOptional();
     void audio_channels_useChannelPositions();
+    void audio_channels_preferOriginalPositions();
+    void audio_channels_useChannelLayout();
+    void audio_channels_preferOriginalLayout();
+    void audio_channels_preferOriginalCount();
     void audio_channels_fallbackToChannels();
     void audio_channels_fallbackToStereo();
 
@@ -273,6 +277,83 @@ void TestMediaInfo::audio_channels_useChannelPositions()
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].second, QStringLiteral("Front: L C R, Side: L R, LFE"));
+}
+
+void TestMediaInfo::audio_channels_preferOriginalPositions()
+{
+    // Regression: AC-3 audio track where mediainfo reports the downmix
+    // target ("2") in the base Channels field and the real 5.1 layout only
+    // in *_Original siblings. Fixture taken verbatim from a real file.
+    // The parser must show ChannelPositions_Original (the friendliest form)
+    // instead of falling for the misleading Channels:"2".
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Audio",
+        "StreamOrder":"1",
+        "ID":"1",
+        "Format":"AC-3",
+        "Format_Commercial_IfAny":"Dolby Digital",
+        "Format_Settings_Endianness":"Big",
+        "CodecID":"2000",
+        "Duration":"6165.536",
+        "BitRate_Mode":"CBR",
+        "BitRate":"448000",
+        "Channels":"2",
+        "Channels_Original":"6",
+        "ChannelPositions_Original":"Front: L C R, Side: L R, LFE",
+        "ChannelLayout_Original":"L R C LFE Ls Rs",
+        "SamplesPerFrame":"1536",
+        "SamplingRate":"48000"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].first, QStringLiteral("AC-3 "));
+    QCOMPARE(rows[0].second, QStringLiteral("Front: L C R, Side: L R, LFE"));
+}
+
+void TestMediaInfo::audio_channels_useChannelLayout()
+{
+    // No Positions fields at all — fall through to ChannelLayout, which is
+    // the terser "L R C LFE Ls Rs" form some containers emit.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Audio","Format":"Opus",
+        "ChannelLayout":"L R C LFE Ls Rs",
+        "Channels":"6"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("L R C LFE Ls Rs"));
+}
+
+void TestMediaInfo::audio_channels_preferOriginalLayout()
+{
+    // No Positions fields, but both ChannelLayout (base) and the _Original
+    // sibling are present. The _Original wins within the Layout tier for
+    // the same reason as Positions: it describes the real audio content.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Audio","Format":"AC-3",
+        "ChannelLayout":"L R",
+        "ChannelLayout_Original":"L R C LFE Ls Rs",
+        "Channels":"2",
+        "Channels_Original":"6"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("L R C LFE Ls Rs"));
+}
+
+void TestMediaInfo::audio_channels_preferOriginalCount()
+{
+    // No Positions or Layout info at all — only raw channel counts. In that
+    // case Channels_Original trumps the potentially-misleading base Channels,
+    // so an AC-3 5.1 stream shows "6" instead of "2" even without layout info.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Audio","Format":"AC-3",
+        "Channels":"2",
+        "Channels_Original":"6"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("6"));
 }
 
 void TestMediaInfo::audio_channels_fallbackToChannels()
