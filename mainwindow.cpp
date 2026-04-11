@@ -435,6 +435,36 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     event->accept();
 }
 
+void MainWindow::thumbnailRequestCurrent()
+{
+    // If we've settled on a directory, resolve it to its first contained
+    // media file so single-file directories show their thumbnail/metadata
+    // without the user drilling in. FileSystemHighlight cleared currentFile
+    // when the selection landed on a directory.
+    //
+    // Sort with a QCollator configured to match QFileSystemModel's own
+    // ordering (case-insensitive, numeric/natural, locale-aware) so the
+    // file we pick is actually the one the tree view displays first.
+    // QDir::Name alone is raw ASCII case-sensitive, which disagrees with
+    // the tree view whenever extension case differs.
+    if (currentFile.isEmpty() && fs->isDir(currentIndex)) {
+        QFileInfoList entries = QDir(currentPath).entryInfoList(
+            QDir::Files | QDir::NoDotAndDotDot, QDir::NoSort);
+        if (!entries.isEmpty()) {
+            QCollator collator;
+            collator.setNumericMode(true);
+            collator.setCaseSensitivity(Qt::CaseInsensitive);
+            std::sort(entries.begin(), entries.end(),
+                      [&collator](const QFileInfo &a, const QFileInfo &b) {
+                return collator.compare(a.fileName(), b.fileName()) < 0;
+            });
+            currentFile = entries.first().absoluteFilePath();
+        }
+    }
+    if (!currentFile.isEmpty())
+        this->thumbnailRequest(currentFile);
+}
+
 void MainWindow::keyReleaseEvent(QKeyEvent *event)
 {
     switch (event->key()) {
@@ -443,6 +473,12 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
         /* Only request a directory refresh when we've come to a stop in a single position. */
         if (!event->isAutoRepeat()) {
             this->moveWatcher(currentIndex);
+            // Left/Right also moves the selection (to parent dir / first
+            // child), so the new selection needs its thumbnail requested
+            // just like Up/Down/Page does. Without this, navigating up a
+            // level via Left used to leave the thumbnail/metadata blank
+            // until the user pressed Up/Down to "nudge" it.
+            this->thumbnailRequestCurrent();
         }
         break;
     case Qt::Key_Up:
@@ -451,33 +487,7 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     case Qt::Key_PageDown:
         /* Only request a thumbnail when we've come to a stop in a single position. */
         if (!event->isAutoRepeat()) {
-            // If we've settled on a directory, resolve it to its first
-            // contained media file so single-file directories show their
-            // thumbnail/metadata without the user drilling in. FSH cleared
-            // currentFile when the selection landed on a directory.
-            //
-            // Sort with a QCollator configured to match QFileSystemModel's
-            // own ordering (case-insensitive, numeric/natural, locale-aware)
-            // so the file we pick is actually the one the tree view displays
-            // first. QDir::Name alone is raw ASCII case-sensitive, which
-            // disagrees with the tree view whenever extension case differs.
-            if (currentFile.isEmpty() && fs->isDir(currentIndex)) {
-                QFileInfoList entries = QDir(currentPath).entryInfoList(
-                    QDir::Files | QDir::NoDotAndDotDot, QDir::NoSort);
-                if (!entries.isEmpty()) {
-                    QCollator collator;
-                    collator.setNumericMode(true);
-                    collator.setCaseSensitivity(Qt::CaseInsensitive);
-                    std::sort(entries.begin(), entries.end(),
-                              [&collator](const QFileInfo &a, const QFileInfo &b) {
-                        return collator.compare(a.fileName(), b.fileName()) < 0;
-                    });
-                    currentFile = entries.first().absoluteFilePath();
-                }
-            }
-            if (!currentFile.isEmpty())
-                this->thumbnailRequest(currentFile);
-            //this->moveWatcher(currentIndex);
+            this->thumbnailRequestCurrent();
         }
         break;
     default:

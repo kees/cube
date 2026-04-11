@@ -36,6 +36,7 @@ private slots:
 
 private:
     QString thumbnailCacheLookup(const QString &mediaPathName) const;
+    void thumbnailRequestCurrent();
     void thumbnailStartNext();
     void thumbnailStatusUpdate();
     void thumbnailDisplay(const QString &thumbnail);
