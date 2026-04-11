@@ -88,7 +88,14 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             if (video.endsWith(" Visual"))
                 video.chop(7);
 
-            QString fps = info["FrameRate"].toString();
+            // Prefer the original (pre-pulldown) frame rate when mediainfo
+            // provides it: for 3:2-telecined NTSC content, FrameRate reports
+            // the 29.97 playback rate but FrameRate_Original reports the
+            // 23.976 source rate, which is the more informative value for a
+            // media-browsing UI ("this is a 24p film, not a broadcast").
+            QString fps = info["FrameRate_Original"].isString()
+                          ? info["FrameRate_Original"].toString()
+                          : info["FrameRate"].toString();
             // Remove trailing zeros
             while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
                 fps.chop(1);

@@ -51,6 +51,7 @@ private slots:
     void video_fpsTrim();
     void video_stripVisual();
     void video_formatUnchanged();
+    void video_fpsPrefersOriginal();
 
     // --- Audio: language, channel-position fallback chain ---
     void audio_languageOptional();
@@ -237,6 +238,24 @@ void TestMediaInfo::video_formatUnchanged()
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].first, QStringLiteral("AV1 "));
     QCOMPARE(rows[0].second, QStringLiteral("3840x2160 @ 60fps"));
+}
+
+void TestMediaInfo::video_fpsPrefersOriginal()
+{
+    // Telecined film content: container reports the 29.97 NTSC pulldown
+    // rate in FrameRate, but the real source rate lives in FrameRate_Original.
+    // Parser must prefer the _Original value so the UI shows "23.976fps"
+    // (a 24p movie) instead of "29.97fps" (a broadcast-rate stream).
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Video","Format":"MPEG-2 Video",
+        "Width":"720","Height":"480",
+        "FrameRate":"29.970",
+        "FrameRate_Original":"23.976"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].first, QStringLiteral("MPEG-2 Video "));
+    QCOMPARE(rows[0].second, QStringLiteral("720x480 @ 23.976fps"));
 }
 
 // ----------------------------------------------------------------------
