@@ -1,3 +1,8 @@
+/*
+ * cube media player
+ * Copyright 2018-2026 Kees Cook <kees@outflux.net>
+ * License: GPLv3+
+ */
 #include <QApplication>
 //#include <QDesktopWidget>
 #include <QKeyEvent>
