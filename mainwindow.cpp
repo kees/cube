@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QCollator>
+#include <QStandardPaths>
 
 #include <QFileIconProvider>
 
@@ -35,6 +36,15 @@ MainWindow::MainWindow(QWidget *parent) :
     toplevel = settings.value("toplevel", "/").toString();
     program_player = settings.value("player", "vidplay").toString();
     program_thumbnailer = settings.value("thumbnailer", "thumbnailer").toString();
+
+    // Resolve the thumbnailer program's absolute path once up front so the
+    // per-keystroke thumbnailCacheLookup() doesn't walk $PATH every time.
+    // Empty result means "not found" — in that case cache lookups skip the
+    // script-mtime check (see thumbnailCacheLookup for rationale).
+    thumbnailerPath = QStandardPaths::findExecutable(program_thumbnailer);
+    qDebug() << "thumbnailer program:" << program_thumbnailer
+             << "resolved to:" << (thumbnailerPath.isEmpty() ? QString("<not found on PATH>") : thumbnailerPath);
+
     // Save our settings so they can be discovered later
     settings.setValue("toplevel", toplevel);
     settings.setValue("player", program_player);
@@ -203,6 +213,20 @@ QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
     const QDateTime mediaMtime = QFileInfo(canonical).lastModified();
     if (mediaMtime > thumbInfo.lastModified() || mediaMtime > jsonInfo.lastModified())
         return QString();
+
+    // Also invalidate if the thumbnailer program itself is newer than the
+    // cached sidecars — i.e. the generating code has been updated (e.g. a
+    // filter fix) and existing cached output may be wrong. `thumbnailerPath`
+    // was resolved once in the constructor via QStandardPaths::findExecutable
+    // so this path is hot (just a stat, no PATH walk per call). Empty means
+    // the program couldn't be located at startup; in that case skip the
+    // check rather than invalidating everything, since a spawn would fail
+    // later anyway and we'd rather serve cache than blank the UI.
+    if (!thumbnailerPath.isEmpty()) {
+        const QDateTime thumbnailerMtime = QFileInfo(thumbnailerPath).lastModified();
+        if (thumbnailerMtime > thumbInfo.lastModified() || thumbnailerMtime > jsonInfo.lastModified())
+            return QString();
+    }
 
     return thumb;
 }

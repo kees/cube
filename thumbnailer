@@ -3,6 +3,14 @@ CACHE=~/.cache/playback/thumbnails
 EXT=png
 LOG=~/.cache/playback/thumbnailer.log
 
+# Resolve this script's own path so cached thumbnails can be invalidated
+# when the thumbnailer logic changes (e.g. the anamorphic filter fix).
+# Handle all three invocation styles: absolute path, relative path, and
+# bare name found on PATH. Falls back to $0 if resolution fails so the
+# mtime test below simply never fires stale-detection.
+SELF=$(command -v "$0" 2>/dev/null)
+[ -n "$SELF" ] && [ -e "$SELF" ] || SELF="$0"
+
 MEDIA=$(realpath "$@")
 
 HASH=$(echo -n "$MEDIA" | sha256sum | awk '{print $1}')
@@ -76,13 +84,13 @@ do_json()
 	rm -f "$LINK"
 }
 
-if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ]; then
+if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ] || [ "$SELF" -nt "$THUMB" ]; then
 	do_thumbnail "$MEDIA"
 else
 	echo "$MEDIA: using thumb $THUMB" >> "$LOG"
 fi
 
-if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ]; then
+if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ] || [ "$SELF" -nt "$JSON" ]; then
 	do_json "$MEDIA"
 else
 	echo "$MEDIA: using json $JSON" >> "$LOG"

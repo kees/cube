@@ -59,6 +59,12 @@ private:
     QString toplevel;
     QString program_player;
     QString program_thumbnailer;
+    // Absolute path of `program_thumbnailer` resolved at construction time
+    // via QStandardPaths::findExecutable, so `thumbnailCacheLookup` doesn't
+    // walk $PATH on every selection change. Empty if the program couldn't
+    // be located; in that case the cache's "is the script newer than the
+    // thumb?" check is skipped.
+    QString thumbnailerPath;
 
     QModelIndex currentIndex;
     QString currentFile;
