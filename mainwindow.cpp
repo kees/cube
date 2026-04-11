@@ -217,9 +217,12 @@ void MainWindow::thumbnailRequest(QString &path)
         return;
     }
 
-    // Dedup: if this exact file is already being generated, nothing to do.
-    if (thumbnailsInFlight.contains(path))
+    // Dedup: if this exact file is already being generated, let the user
+    // see that (progress/queue counters) instead of silently returning.
+    if (thumbnailsInFlight.contains(path)) {
+        thumbnailStatusUpdate();
         return;
+    }
 
     // Dedup: drop any earlier queue entry for the same file so the most
     // recent request is the one that determines its LIFO priority.
@@ -232,6 +235,7 @@ void MainWindow::thumbnailRequest(QString &path)
     qDebug() << "want thumbnail for " << path << " (queue depth " << thumbnailQueue.size() << ")";
 
     thumbnailStartNext();
+    thumbnailStatusUpdate();
 }
 
 void MainWindow::thumbnailStartNext()
@@ -266,6 +270,11 @@ void MainWindow::thumbnailStartNext()
             }
 
             thumbnailStartNext();
+            // Refresh the "generating/queued/N running/M queued" status if
+            // the selected file is still waiting on the pool. No-op (leaves
+            // real metadata in place) if the selected file just finished
+            // and was painted by thumbnailDisplay above.
+            thumbnailStatusUpdate();
         });
 
         qDebug() << "launching " << program_thumbnailer << " " << args.join(" ")
@@ -282,6 +291,38 @@ void MainWindow::thumbnailStartNext()
             }
         });
     }
+}
+
+void MainWindow::thumbnailStatusUpdate()
+{
+    // Only overwrite the metadata table with a status placeholder if the
+    // currently-selected file is actually waiting on the pool. If its real
+    // JSON metadata has already been displayed (or it's a cache hit), leave
+    // the table alone.
+    const bool running = thumbnailsInFlight.contains(currentPath);
+    const bool queued = thumbnailQueue.contains(currentPath);
+    if (!running && !queued)
+        return;
+
+    metadata->clear();
+
+    QList<QStandardItem *> row;
+
+    row.append(new QStandardItem("Thumbnailer "));
+    row.append(new QStandardItem(running ? "generating..." : "queued"));
+    metadata->appendRow(row);
+
+    row.clear();
+    row.append(new QStandardItem("Running "));
+    row.append(new QStandardItem(QString("%1 / %2")
+                                 .arg(thumbnailsInFlight.size())
+                                 .arg(thumbnailMaxConcurrent)));
+    metadata->appendRow(row);
+
+    row.clear();
+    row.append(new QStandardItem("Queued "));
+    row.append(new QStandardItem(QString::number(thumbnailQueue.size())));
+    metadata->appendRow(row);
 }
 
 void MainWindow::FileSystemExpanded(const QModelIndex &index)
