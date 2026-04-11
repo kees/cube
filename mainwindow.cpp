@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QDateTime>
+#include <QCollator>
 
 #include <QFileIconProvider>
 
@@ -428,11 +429,25 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
             // contained media file so single-file directories show their
             // thumbnail/metadata without the user drilling in. FSH cleared
             // currentFile when the selection landed on a directory.
+            //
+            // Sort with a QCollator configured to match QFileSystemModel's
+            // own ordering (case-insensitive, numeric/natural, locale-aware)
+            // so the file we pick is actually the one the tree view displays
+            // first. QDir::Name alone is raw ASCII case-sensitive, which
+            // disagrees with the tree view whenever extension case differs.
             if (currentFile.isEmpty() && fs->isDir(currentIndex)) {
-                const QFileInfoList entries = QDir(currentPath).entryInfoList(
-                    QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
-                if (!entries.isEmpty())
+                QFileInfoList entries = QDir(currentPath).entryInfoList(
+                    QDir::Files | QDir::NoDotAndDotDot, QDir::NoSort);
+                if (!entries.isEmpty()) {
+                    QCollator collator;
+                    collator.setNumericMode(true);
+                    collator.setCaseSensitivity(Qt::CaseInsensitive);
+                    std::sort(entries.begin(), entries.end(),
+                              [&collator](const QFileInfo &a, const QFileInfo &b) {
+                        return collator.compare(a.fileName(), b.fileName()) < 0;
+                    });
                     currentFile = entries.first().absoluteFilePath();
+                }
             }
             if (!currentFile.isEmpty())
                 this->thumbnailRequest(currentFile);
