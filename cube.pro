@@ -34,3 +34,10 @@ HEADERS += \
 
 FORMS += \
         mainwindow.ui
+
+# `make test` — runs the thumbnailer functional test. No C++ dependency
+# (the test exercises the bash `thumbnailer` script directly), so it does
+# not depend on the main build target and can be run without building cube.
+test.target = test
+test.commands = bash $$PWD/tests/test_thumbnailer.sh
+QMAKE_EXTRA_TARGETS += test
