@@ -7,3 +7,6 @@ cube
 # qmake
 /.qmake.stash
 build
+
+# qtcreator
+cube.pro.user
