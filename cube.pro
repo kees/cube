@@ -27,17 +27,21 @@ QMAKE_CXXFLAGS = -Wno-unused-parameter
 
 SOURCES += \
         main.cpp \
-        mainwindow.cpp
+        mainwindow.cpp \
+        mediainfo.cpp
 
 HEADERS += \
-        mainwindow.h
+        mainwindow.h \
+        mediainfo.h
 
 FORMS += \
         mainwindow.ui
 
-# `make test` — runs the thumbnailer functional test. No C++ dependency
-# (the test exercises the bash `thumbnailer` script directly), so it does
-# not depend on the main build target and can be run without building cube.
+# `make test` — runs all tests under tests/ via a single driver script:
+# the thumbnailer functional test (pure shell) and the parseMediaInfo()
+# QTest binary (built on the fly from tests/tst_mediainfo.pro). Neither
+# depends on the main cube binary being built, so this target is
+# independent of `first` / `all`.
 test.target = test
-test.commands = bash $$PWD/tests/test_thumbnailer.sh
+test.commands = bash $$PWD/tests/run_tests.sh
 QMAKE_EXTRA_TARGETS += test

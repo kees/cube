@@ -20,13 +20,10 @@
 
 #include <QFileIconProvider>
 
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-
 #include <unistd.h>
 
 #include "mainwindow.h"
+#include "mediainfo.h"
 #include "ui_mainwindow.h"
 
 MainWindow::MainWindow(QWidget *parent) :
@@ -514,142 +511,18 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
     ui->grThumbnail->fitInView(image.rect(), Qt::KeepAspectRatio);
     ui->grThumbnail->centerOn(scene->items()[0]);
 
-    /* Media info JSON */
-    QString json_path = thumbnail + ".json";
-    QFile json_file;
-    QByteArray json_bytes;
-
-    json_file.setFileName(json_path);
+    /* Media info JSON — parsing lives in mediainfo.cpp so it can be
+     * unit-tested without dragging in Qt Widgets. */
+    QFile json_file(thumbnail + ".json");
     json_file.open(QIODevice::ReadOnly | QIODevice::Text);
-    json_bytes = json_file.readAll();
+    const QByteArray json_bytes = json_file.readAll();
     json_file.close();
 
-    QJsonDocument doc = QJsonDocument::fromJson(json_bytes);
-    QJsonObject json = doc.object().value("media").toObject();
-
-    //qDebug() << "mediainfo for " << path << " ready: " << json;
-
-    QList<QStandardItem *> row;
-    //row.append(new QStandardItem("Filename"));
-    //row.append(new QStandardItem(path));
-    //metadata->appendRow(row);
-
-    QJsonArray track = json["track"].toArray();
-    for (int i=0; i < track.count(); i++) {
-        QJsonObject info = track[i].toObject();
-        if (info["@type"] == "General" && info["Format"].isString()) {
-            row.clear();
-            row.append(new QStandardItem("Format "));
-            QString format = info["Format"].toString();
-            size_t size = info["FileSize"].toString().toFloat();
-            size_t divider = 1;
-            QString si = "B";
-
-            if (size > 1024 * divider) {
-                si = "KiB";
-                divider *= 1024;
-            }
-            if (size > 1024 * divider) {
-                si = "MiB";
-                divider *= 1024;
-            }
-            if (size > 1024 * divider) {
-                si = "GiB";
-                divider *= 1024;
-            }
-            size_t whole = size;
-            size_t tenths = 0;
-            if (divider > 10) {
-                whole = size / (divider / 10);
-                tenths = whole % 10;
-                whole /= 10;
-            }
-            format += QString(" (%1").arg(whole);
-            if (tenths != 0)
-                format += QString(".%1").arg(tenths);
-            format += QString("%1)").arg(si);
-
-            row.append(new QStandardItem(format));
-            metadata->appendRow(row);
-
-            if (info["Duration"].isString()) {
-                int seconds = info["Duration"].toString().toFloat();
-                int hours = seconds / 3600;
-                seconds %= 3600;
-                int minutes = seconds / 60;
-                seconds %= 60;
-
-                QString duration = "";
-
-                if (hours > 0)
-                    duration += QString::asprintf("%dh", hours);
-                if (minutes > 0 || hours > 0)
-                    duration += QString::asprintf(hours > 0 ? "%02dm" : "%dm", minutes);
-                duration += QString::asprintf(hours > 0 || minutes > 0 ? "%02ds" : "%ds", seconds);
-
-                qDebug() << "Duration: " + duration;
-
-                row.clear();
-                row.append(new QStandardItem("Duration "));
-                row.append(new QStandardItem(duration));
-                metadata->appendRow(row);
-            }
-        }
-        if (info["@type"] == "Video") {
-            QString video = info["Format"].toString();
-            // Strip out "Visual" from "MPEG-4 Visual"
-            if (video.endsWith(" Visual"))
-                video.chop(7);
-
-            QString fps = info["FrameRate"].toString();
-            // Remove trailing zeros
-            while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
-                fps.chop(1);
-
-            QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
-            qDebug() << details;
-
-            row.clear();
-            row.append(new QStandardItem(video + " "));
-            row.append(new QStandardItem(details));
-            metadata->appendRow(row);
-        }
-        if (info["@type"] == "Audio") {
-            qDebug() << info["Format"].toString() + ": " + info["ChannelPositions"].toString();
-
-            QString audio = info["Format"].toString();
-            if (info["Language"].isString())
-                audio += QString(" (%1)").arg(info["Language"].toString());
-
-            QString channels;
-            if (info["ChannelPositions"].isString())
-                channels = info["ChannelPositions"].toString();
-            else if (info["Channels"].isString())
-                channels = info["Channels"].toString();
-            else
-                channels = "2"; // assume missing channel count is in stereo
-
-            row.clear();
-            row.append(new QStandardItem(audio + " "));
-            row.append(new QStandardItem(channels));
-            metadata->appendRow(row);
-        }
-        if (info["@type"] == "Text") {
-            qDebug() << "Subs lang: " + info["Language"].toString();
-
-            QString lang;
-            if (info["Language"].isString())
-                lang = info["Language"].toString();
-            else
-                lang = "unspecified";
-
-            if (info["Title"].isString())
-                lang += QString(" (%1)").arg(info["Title"].toString());
-
-            row.clear();
-            row.append(new QStandardItem("Subtitles "));
-            row.append(new QStandardItem(lang));
-            metadata->appendRow(row);
-        }
+    const QList<QPair<QString, QString>> rows = parseMediaInfo(json_bytes);
+    for (const auto &entry : rows) {
+        QList<QStandardItem *> row;
+        row.append(new QStandardItem(entry.first));
+        row.append(new QStandardItem(entry.second));
+        metadata->appendRow(row);
     }
 }

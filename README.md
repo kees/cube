@@ -31,17 +31,26 @@ Release build
 
 tests
 -----
-The `thumbnailer` script is exercised by a functional test under `tests/`.
-It synthesizes a one-second video with `ffmpeg -f lavfi` (no fixtures on
-disk), runs `thumbnailer` against it inside a sandboxed `$HOME`, and
-asserts the cache layout, stdout contract, cache reuse, and regeneration
-on stale cache.
+Two test suites live under `tests/`, both invoked via `make test`:
+
+1. `test_thumbnailer.sh` — functional test for the `thumbnailer` shell
+   script. Synthesizes a one-second video with `ffmpeg -f lavfi` (no
+   fixtures on disk), runs `thumbnailer` against it inside a sandboxed
+   `$HOME`, and asserts the cache layout, stdout contract, cache reuse,
+   and regeneration when media mtime advances past the cached thumb.
+2. `tst_mediainfo` — QTest binary built from `tests/tst_mediainfo.pro`.
+   Exercises `parseMediaInfo()` in `mediainfo.cpp` (the JSON walk that
+   produces metadata-table rows) with a matrix of fixtures covering
+   file-size formatting, duration formatting, video/audio/subtitle
+   branches, and degenerate input. Pins the current behaviour so
+   refactors of metadata handling can be done with confidence.
 
 Run from the build directory once `qmake6` has been invoked:
 - make -C build test
 
-The test exercises the full `thumbnailer` pipeline, so it needs the
-runtime dependencies above (`mpv`, `mediainfo`, `imagemagick`). The one
-additional tool the test itself requires — for synthesizing the sample
-video — is `ffmpeg`:
+The tests exercise the full `thumbnailer` pipeline and build a small
+Qt binary, so they need the runtime dependencies above (`mpv`,
+`mediainfo`, `imagemagick`) plus the build dependencies. The one
+additional tool the tests themselves require — for synthesizing the
+sample video — is `ffmpeg`:
 - apt install ffmpeg
