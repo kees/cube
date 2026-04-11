@@ -288,14 +288,16 @@ void TestMediaInfo::audio_channels_fallbackToChannels()
 
 void TestMediaInfo::audio_channels_fallbackToStereo()
 {
-    // Neither ChannelPositions nor Channels → assume stereo ("2").
+    // Neither ChannelPositions nor Channels → assume stereo, labelled as
+    // a guess so it's distinguishable from an actual "2" reported by
+    // mediainfo's Channels field.
     const QByteArray json = R"({"media":{"track":[{
         "@type":"Audio","Format":"Opus","Language":"Spanish"
     }]}})";
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].first, QStringLiteral("Opus (Spanish) "));
-    QCOMPARE(rows[0].second, QStringLiteral("2"));
+    QCOMPARE(rows[0].second, QStringLiteral("2 (presumed)"));
 }
 
 // ----------------------------------------------------------------------

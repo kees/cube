@@ -108,7 +108,7 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             else if (info["Channels"].isString())
                 channels = info["Channels"].toString();
             else
-                channels = "2"; // assume missing channel count is in stereo
+                channels = "2 (presumed)"; // no channel info: assume stereo, flag as a guess
 
             rows.append({audio + " ", channels});
         }
