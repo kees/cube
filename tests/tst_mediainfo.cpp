@@ -71,6 +71,7 @@ private slots:
     void audio_channels_preferOriginalLayout();
     void audio_channels_preferOriginalCount();
     void audio_channels_fallbackToChannels();
+    void audio_channels_bareTwoRendersAsStereoGroup();
     void audio_channels_fallbackToStereo();
 
     // --- Subtitles: language + optional title ---
@@ -505,18 +506,41 @@ void TestMediaInfo::audio_channels_fallbackToChannels()
     QCOMPARE(rows[0].second, QStringLiteral("6"));
 }
 
+void TestMediaInfo::audio_channels_bareTwoRendersAsStereoGroup()
+{
+    // Regression: when the only info we have is a bare Channels:"2", render
+    // it as "Front: L R" so the row reads consistently with multichannel
+    // rows that come in as position groups. Also verify the same rewrite
+    // when the count comes from Channels_Original instead of the base.
+    const QByteArray base = R"({"media":{"track":[{
+        "@type":"Audio","Format":"AAC","Channels":"2"
+    }]}})";
+    Rows rows = parseMediaInfo(base);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].first, QStringLiteral("AAC "));
+    QCOMPARE(rows[0].second, QStringLiteral("Front: L R"));
+
+    const QByteArray orig = R"({"media":{"track":[{
+        "@type":"Audio","Format":"AC-3","Channels_Original":"2"
+    }]}})";
+    rows = parseMediaInfo(orig);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("Front: L R"));
+}
+
 void TestMediaInfo::audio_channels_fallbackToStereo()
 {
-    // Neither ChannelPositions nor Channels → assume stereo, labelled as
-    // a guess so it's distinguishable from an actual "2" reported by
-    // mediainfo's Channels field.
+    // Neither ChannelPositions nor Channels → assume stereo, rendered in
+    // the same position-group form as other stereo rows and flagged with
+    // "(presumed)" so it's distinguishable from a file that actually
+    // reported 2 channels via mediainfo.
     const QByteArray json = R"({"media":{"track":[{
         "@type":"Audio","Format":"Opus","Language":"Spanish"
     }]}})";
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].first, QStringLiteral("Opus (Spanish) "));
-    QCOMPARE(rows[0].second, QStringLiteral("2 (presumed)"));
+    QCOMPARE(rows[0].second, QStringLiteral("Front: L R (presumed)"));
 }
 
 // ----------------------------------------------------------------------

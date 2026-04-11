@@ -169,7 +169,17 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             else if (info["Channels"].isString())
                 channels = info["Channels"].toString();
             else
-                channels = "2 (presumed)"; // no channel info: assume stereo, flag as a guess
+                channels = "Front: L R (presumed)"; // no channel info at all
+
+            // When the only info we have is a bare count of "2", render it
+            // in the same "Front: L R" position-group form that multichannel
+            // rows use, so stereo files read consistently in the metadata
+            // table. Other counts stay as-is (there's no universal position
+            // notation for a bare "6" etc. without the real layout names,
+            // and rewriting would hide the fact that mediainfo didn't give
+            // us layout info).
+            if (channels == "2")
+                channels = "Front: L R";
 
             rows.append({audio + " ", channels});
         }
