@@ -23,4 +23,8 @@ Build
 
 deployment
 ----------
-- release build ?
+- release build
+	export LANG=C.UTF-8
+	mkdir -p build
+	qmake6 -o build/Makefile cube.pro
+	make -C build
