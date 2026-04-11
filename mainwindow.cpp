@@ -159,7 +159,11 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     currentIndex = index;
 
     if (fs->isDir(index)) {
-        // Draw window heading
+        // Draw window heading. Clear currentFile so any stale per-file
+        // pipeline state doesn't linger into the directory selection; the
+        // debounced keyReleaseEvent will resolve it to the first contained
+        // media file once the user settles here.
+        currentFile.clear();
         ui->lblDirectory->setText(heading);
         return;
     }
@@ -212,7 +216,7 @@ void MainWindow::thumbnailRequest(QString &path)
         // Drop any stale pending request for this file so the worker pool
         // doesn't regenerate it needlessly later.
         thumbnailQueue.removeAll(path);
-        if (currentPath == path)
+        if (currentFile == path)
             thumbnailDisplay(cachedThumb);
         return;
     }
@@ -272,8 +276,8 @@ void MainWindow::thumbnailStartNext()
                     qDebug() << "thumbnailer returned bogus path for " << mediaPathName
                              << " : " << thumbnail;
                 } else {
-                    qDebug() << "current:" << currentPath << " path:" << mediaPathName;
-                    if (currentPath == mediaPathName)
+                    qDebug() << "current:" << currentFile << " path:" << mediaPathName;
+                    if (currentFile == mediaPathName)
                         thumbnailDisplay(thumbnail);
                 }
             }
@@ -305,11 +309,11 @@ void MainWindow::thumbnailStartNext()
 void MainWindow::thumbnailStatusUpdate()
 {
     // Only overwrite the metadata table with a status placeholder if the
-    // currently-selected file is actually waiting on the pool. If its real
-    // JSON metadata has already been displayed (or it's a cache hit), leave
-    // the table alone.
-    const bool running = thumbnailsInFlight.contains(currentPath);
-    const bool queued = thumbnailQueue.contains(currentPath);
+    // currently-selected file (or first-file-in-directory) is actually
+    // waiting on the pool. If its real JSON metadata has already been
+    // displayed (or it's a cache hit), leave the table alone.
+    const bool running = thumbnailsInFlight.contains(currentFile);
+    const bool queued = thumbnailQueue.contains(currentFile);
     if (!running && !queued)
         return;
 
@@ -420,8 +424,18 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     case Qt::Key_PageDown:
         /* Only request a thumbnail when we've come to a stop in a single position. */
         if (!event->isAutoRepeat()) {
-            if (!fs->isDir(currentIndex))
-                this->thumbnailRequest(currentPath);
+            // If we've settled on a directory, resolve it to its first
+            // contained media file so single-file directories show their
+            // thumbnail/metadata without the user drilling in. FSH cleared
+            // currentFile when the selection landed on a directory.
+            if (currentFile.isEmpty() && fs->isDir(currentIndex)) {
+                const QFileInfoList entries = QDir(currentPath).entryInfoList(
+                    QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
+                if (!entries.isEmpty())
+                    currentFile = entries.first().absoluteFilePath();
+            }
+            if (!currentFile.isEmpty())
+                this->thumbnailRequest(currentFile);
             //this->moveWatcher(currentIndex);
         }
         break;
