@@ -7,6 +7,10 @@
 #include <QDebug>
 #include <QTimer>
 #include <QThread>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFileInfo>
+#include <QDateTime>
 
 #include <QFileIconProvider>
 
@@ -164,8 +168,55 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     currentFile = path;
 }
 
+QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
+{
+    // Replicate the thumbnailer script's cache layout:
+    //   CACHE=~/.cache/playback/thumbnails
+    //   HASH=sha256(realpath($MEDIA))       // echo -n, no trailing newline
+    //   THUMB=$CACHE/${HASH:0:2}/$HASH.png
+    //   JSON=$THUMB.json
+    // If both sidecar files exist and neither is older than the media file,
+    // the script would just print the cached paths, so we can skip the
+    // subprocess entirely. Invalidation is "delete from ~/.cache/playback".
+    const QString canonical = QFileInfo(mediaPathName).canonicalFilePath();
+    if (canonical.isEmpty())
+        return QString();
+
+    const QString hashHex = QString::fromLatin1(
+        QCryptographicHash::hash(canonical.toUtf8(), QCryptographicHash::Sha256).toHex());
+    const QString cacheRoot = QDir::homePath() + "/.cache/playback/thumbnails";
+    const QString thumb = QString("%1/%2/%3.png").arg(cacheRoot, hashHex.left(2), hashHex);
+    const QString json = thumb + ".json";
+
+    const QFileInfo thumbInfo(thumb);
+    const QFileInfo jsonInfo(json);
+    if (!thumbInfo.exists() || !jsonInfo.exists())
+        return QString();
+
+    const QDateTime mediaMtime = QFileInfo(canonical).lastModified();
+    if (mediaMtime > thumbInfo.lastModified() || mediaMtime > jsonInfo.lastModified())
+        return QString();
+
+    return thumb;
+}
+
 void MainWindow::thumbnailRequest(QString &path)
 {
+    // Fast path: if the thumbnailer's on-disk cache is already fresh for
+    // this file, display it directly without spawning a subprocess. Keeps
+    // revisiting files snappy (including across app restarts) and lets the
+    // user invalidate by just deleting files under ~/.cache/playback.
+    const QString cachedThumb = thumbnailCacheLookup(path);
+    if (!cachedThumb.isEmpty()) {
+        qDebug() << "thumbnail cache hit for " << path << " -> " << cachedThumb;
+        // Drop any stale pending request for this file so the worker pool
+        // doesn't regenerate it needlessly later.
+        thumbnailQueue.removeAll(path);
+        if (currentPath == path)
+            thumbnailDisplay(cachedThumb);
+        return;
+    }
+
     // Dedup: if this exact file is already being generated, nothing to do.
     if (thumbnailsInFlight.contains(path))
         return;
