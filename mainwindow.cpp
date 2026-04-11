@@ -463,6 +463,11 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
 {
     qDebug() << "want to show " << thumbnail;
 
+    // Wipe any status-placeholder rows that thumbnailStatusUpdate() may have
+    // written while we were waiting on the pool; the JSON walk below appends
+    // the real rows and assumes it starts empty.
+    metadata->clear();
+
     QImage image(thumbnail);
 
     // Build a new scene because nothing seems to actually work to recenter the image. :(
