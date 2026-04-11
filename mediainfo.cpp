@@ -17,6 +17,24 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
     QJsonObject root = doc.object().value("media").toObject();
     QJsonArray track = root["track"].toArray();
 
+    // Pre-scan the General track for overall-file bitrate info. This lives
+    // alongside FileSize on General, not on the Video track, but we want to
+    // display it *in* the Video row so the format/fps/rate info all sits
+    // together. Using a separate pass rather than assuming General comes
+    // first in the JSON (it usually does, but relying on order is fragile).
+    QString overallBitRateMode;
+    QString overallBitRate;
+    for (int i = 0; i < track.count(); i++) {
+        QJsonObject info = track[i].toObject();
+        if (info["@type"] == "General") {
+            if (info["OverallBitRate_Mode"].isString())
+                overallBitRateMode = info["OverallBitRate_Mode"].toString();
+            if (info["OverallBitRate"].isString())
+                overallBitRate = info["OverallBitRate"].toString();
+            break;
+        }
+    }
+
     for (int i = 0; i < track.count(); i++) {
         QJsonObject info = track[i].toObject();
 
@@ -131,9 +149,56 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             while ((fps.contains(".") && fps.endsWith("0")) || fps.endsWith("."))
                 fps.chop(1);
 
-            QString details = info["Width"].toString() + "x" + info["Height"].toString() + " @ " + fps + "fps";
-
+            // Codec row: "23.976fps [@ [VBR ]5Mbps]". Bitrate is appended
+            // only if OverallBitRate was collected from General during the
+            // pre-scan and is parseable and positive. Mode is optional: if
+            // mediainfo doesn't tell us VBR/CBR, we just show the rate.
+            QString details = fps + "fps";
+            if (!overallBitRate.isEmpty()) {
+                bool ok = false;
+                const double bps = overallBitRate.toDouble(&ok);
+                if (ok && bps > 0) {
+                    const double mbps = bps / 1000000.0;
+                    QString rateStr = QString::number(mbps, 'f', 1);
+                    if (rateStr.endsWith(".0"))
+                        rateStr.chop(2);
+                    rateStr += "Mbps";
+                    if (!overallBitRateMode.isEmpty())
+                        details += QString(" @ %1 %2").arg(overallBitRateMode, rateStr);
+                    else
+                        details += " @ " + rateStr;
+                }
+            }
             rows.append({video + " ", details});
+
+            // Size row: "WxH (aspect)". Prefer mediainfo's own
+            // DisplayAspectRatio (which already accounts for anamorphic
+            // SAR — e.g. reports 1.778 for a 720x480 NTSC 16:9 DVD even
+            // though raw w/h would give 1.5), with the usual _Original-
+            // first preference for telecined content. If neither DAR field
+            // is present, fall back to raw width/height arithmetic. Format
+            // the aspect to exactly 2 decimal places so the standard
+            // cinema values (1.33, 1.78, 1.85, 2.39, ...) round cleanly.
+            const QString width = info["Width"].toString();
+            const QString height = info["Height"].toString();
+            if (!width.isEmpty() && !height.isEmpty()) {
+                double dar = 0;
+                if (info["DisplayAspectRatio_Original"].isString())
+                    dar = info["DisplayAspectRatio_Original"].toString().toDouble();
+                else if (info["DisplayAspectRatio"].isString())
+                    dar = info["DisplayAspectRatio"].toString().toDouble();
+                else {
+                    bool wOk = false, hOk = false;
+                    const double w = width.toDouble(&wOk);
+                    const double h = height.toDouble(&hOk);
+                    if (wOk && hOk && h > 0)
+                        dar = w / h;
+                }
+                QString sizeValue = width + "x" + height;
+                if (dar > 0)
+                    sizeValue += QString(" (%1)").arg(QString::number(dar, 'f', 2));
+                rows.append({QStringLiteral("Size "), sizeValue});
+            }
         }
         if (info["@type"] == "Audio") {
             QString audio = info["Format"].toString();

@@ -56,12 +56,21 @@ private slots:
     void date_invalidMonth();
     void date_positionBetweenFormatAndDuration();
 
-    // --- Video: fps trailing-zero strip + " Visual" chop + WxH details ---
+    // --- Video: codec row (fps/bitrate) and Size row (WxH/aspect) ---
     void video_fpsTrim_data();
     void video_fpsTrim();
     void video_stripVisual();
     void video_formatUnchanged();
     void video_fpsPrefersOriginal();
+    void video_bitrate_withMode();
+    void video_bitrate_withoutMode();
+    void video_bitrate_fractional();
+    void video_bitrate_missing();
+    void video_bitrate_preScanWorksRegardlessOfTrackOrder();
+    void video_size_computesFromDimensions();
+    void video_size_prefersDisplayAspectRatio();
+    void video_size_prefersOriginalDar();
+    void video_size_missingDimensions();
 
     // --- Audio: language, channel-position fallback chain ---
     void audio_languageOptional();
@@ -302,25 +311,27 @@ void TestMediaInfo::date_positionBetweenFormatAndDuration()
 void TestMediaInfo::video_fpsTrim_data()
 {
     QTest::addColumn<QByteArray>("fps");
-    QTest::addColumn<QString>("expectedDetails");
+    QTest::addColumn<QString>("expectedFps");
 
     // "30.000" → loop chops trailing 0s, then the trailing ".", then stops.
-    QTest::newRow("30.000 -> 30")    << QByteArray("30.000") << QString("1920x1080 @ 30fps");
+    QTest::newRow("30.000 -> 30")    << QByteArray("30.000") << QString("30fps");
     // "29.970" → one trailing 0 chopped, then stops (no more trailing 0/.).
-    QTest::newRow("29.970 -> 29.97") << QByteArray("29.970") << QString("1920x1080 @ 29.97fps");
+    QTest::newRow("29.970 -> 29.97") << QByteArray("29.970") << QString("29.97fps");
     // "23.976" → nothing chopped.
-    QTest::newRow("23.976 unchanged") << QByteArray("23.976") << QString("1920x1080 @ 23.976fps");
+    QTest::newRow("23.976 unchanged") << QByteArray("23.976") << QString("23.976fps");
     // Integer-looking string with no dot: loop doesn't enter.
-    QTest::newRow("24 unchanged")    << QByteArray("24")     << QString("1920x1080 @ 24fps");
+    QTest::newRow("24 unchanged")    << QByteArray("24")     << QString("24fps");
     // Bare trailing dot gets chopped.
-    QTest::newRow("30. -> 30")       << QByteArray("30.")    << QString("1920x1080 @ 30fps");
+    QTest::newRow("30. -> 30")       << QByteArray("30.")    << QString("30fps");
 }
 
 void TestMediaInfo::video_fpsTrim()
 {
     QFETCH(QByteArray, fps);
-    QFETCH(QString, expectedDetails);
+    QFETCH(QString, expectedFps);
 
+    // No General track → no overall bitrate → codec row is just the fps.
+    // Width/Height present, so a Size row is also emitted.
     const QByteArray json = "{\"media\":{\"track\":[{"
                             "\"@type\":\"Video\","
                             "\"Format\":\"H.264\","
@@ -328,36 +339,39 @@ void TestMediaInfo::video_fpsTrim()
                             "\"FrameRate\":\"" + fps + "\""
                             "}]}}";
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows.size(), 2);
     QCOMPARE(rows[0].first, QStringLiteral("H.264 "));
-    QCOMPARE(rows[0].second, expectedDetails);
+    QCOMPARE(rows[0].second, expectedFps);
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("1920x1080 (1.78)")));
 }
 
 void TestMediaInfo::video_stripVisual()
 {
     // "MPEG-4 Visual" has " Visual" (7 chars) chopped from the end.
+    // 640x480 → raw aspect 1.333 → rounds to "1.33" (Academy ratio).
     const QByteArray json = R"({"media":{"track":[{
         "@type":"Video","Format":"MPEG-4 Visual",
         "Width":"640","Height":"480","FrameRate":"24.000"
     }]}})";
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 1);
-    QCOMPARE(rows[0].first, QStringLiteral("MPEG-4 "));
-    QCOMPARE(rows[0].second, QStringLiteral("640x480 @ 24fps"));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "), QStringLiteral("24fps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("640x480 (1.33)")));
 }
 
 void TestMediaInfo::video_formatUnchanged()
 {
     // Format that doesn't end in " Visual" should pass through untouched
     // (modulo the single trailing-space label suffix).
+    // 3840x2160 → 1.778 → "1.78" (16:9).
     const QByteArray json = R"({"media":{"track":[{
         "@type":"Video","Format":"AV1",
         "Width":"3840","Height":"2160","FrameRate":"60.000"
     }]}})";
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 1);
-    QCOMPARE(rows[0].first, QStringLiteral("AV1 "));
-    QCOMPARE(rows[0].second, QStringLiteral("3840x2160 @ 60fps"));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0], Row(QStringLiteral("AV1 "), QStringLiteral("60fps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("3840x2160 (1.78)")));
 }
 
 void TestMediaInfo::video_fpsPrefersOriginal()
@@ -365,17 +379,166 @@ void TestMediaInfo::video_fpsPrefersOriginal()
     // Telecined film content: container reports the 29.97 NTSC pulldown
     // rate in FrameRate, but the real source rate lives in FrameRate_Original.
     // Parser must prefer the _Original value so the UI shows "23.976fps"
-    // (a 24p movie) instead of "29.97fps" (a broadcast-rate stream).
+    // (a 24p movie) instead of "29.97fps" (a broadcast-rate stream). Also
+    // add DisplayAspectRatio="1.333" so the Size row shows the true NTSC
+    // DVD 4:3 aspect rather than the raw 720/480 = 1.50 coded ratio.
     const QByteArray json = R"({"media":{"track":[{
         "@type":"Video","Format":"MPEG-2 Video",
         "Width":"720","Height":"480",
         "FrameRate":"29.970",
-        "FrameRate_Original":"23.976"
+        "FrameRate_Original":"23.976",
+        "DisplayAspectRatio":"1.333"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-2 Video "), QStringLiteral("23.976fps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("720x480 (1.33)")));
+}
+
+// ----------------------------------------------------------------------
+// Codec-row bitrate: pulls from the General track's OverallBitRate_Mode
+// and OverallBitRate via the pre-scan.
+// ----------------------------------------------------------------------
+
+void TestMediaInfo::video_bitrate_withMode()
+{
+    // Both mode and rate present → "<fps> @ VBR 5Mbps". Note: the General
+    // track also has Format so a Format row is emitted too. We assert the
+    // full row set to pin the order and row count.
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"General","Format":"Matroska","FileSize":"500",
+         "OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"},
+        {"@type":"Video","Format":"AVC",
+         "Width":"1920","Height":"1080","FrameRate":"23.976"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[0], Row(QStringLiteral("Format "), QStringLiteral("Matroska (500B)")));
+    QCOMPARE(rows[1], Row(QStringLiteral("AVC "),    QStringLiteral("23.976fps @ VBR 5Mbps")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Size "),   QStringLiteral("1920x1080 (1.78)")));
+}
+
+void TestMediaInfo::video_bitrate_withoutMode()
+{
+    // Rate present, mode missing → "<fps> @ 1.5Mbps" (no "VBR "/"CBR "
+    // prefix). A 1.5 Mbps value exercises the one-decimal rendering.
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"General","Format":"Matroska","FileSize":"500",
+         "OverallBitRate":"1500000"},
+        {"@type":"Video","Format":"AVC",
+         "Width":"1920","Height":"1080","FrameRate":"30.000"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[1].second, QStringLiteral("30fps @ 1.5Mbps"));
+}
+
+void TestMediaInfo::video_bitrate_fractional()
+{
+    // 12345678 bps → 12.345... Mbps → rounds to "12.3Mbps". Pins the
+    // one-decimal rounding, which is the tricky case (not .0 and not <1).
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"General","Format":"Matroska","FileSize":"500",
+         "OverallBitRate_Mode":"CBR","OverallBitRate":"12345678"},
+        {"@type":"Video","Format":"AVC",
+         "Width":"1920","Height":"1080","FrameRate":"24.000"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[1].second, QStringLiteral("24fps @ CBR 12.3Mbps"));
+}
+
+void TestMediaInfo::video_bitrate_missing()
+{
+    // No General track at all → overallBitRate stays empty → the codec
+    // row is just "<fps>" with no "@" suffix.
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"Video","Format":"AVC",
+         "Width":"1920","Height":"1080","FrameRate":"30.000"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0], Row(QStringLiteral("AVC "),  QStringLiteral("30fps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("1920x1080 (1.78)")));
+}
+
+void TestMediaInfo::video_bitrate_preScanWorksRegardlessOfTrackOrder()
+{
+    // Put the General track *after* the Video track in the JSON. The pre-
+    // scan should still find it, so the Video row still gets the bitrate
+    // suffix. Guards against "grab from General on first encounter" regressions.
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"Video","Format":"AVC",
+         "Width":"1920","Height":"1080","FrameRate":"24.000"},
+        {"@type":"General","Format":"Matroska","FileSize":"500",
+         "OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    // Codec row still gets bitrate. General row order follows track order,
+    // so it comes second here, but that's expected behaviour — rows appear
+    // in the order their driving track appears in the JSON.
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[0], Row(QStringLiteral("AVC "),    QStringLiteral("24fps @ VBR 5Mbps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "),   QStringLiteral("1920x1080 (1.78)")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Format "), QStringLiteral("Matroska (500B)")));
+}
+
+// ----------------------------------------------------------------------
+// Size row: WxH plus aspect ratio from DAR (preferred) or raw pixels.
+// ----------------------------------------------------------------------
+
+void TestMediaInfo::video_size_computesFromDimensions()
+{
+    // No DAR fields at all — Size row computes aspect from raw Width/Height.
+    // 1920x800 → 2.4 → "2.40" (ultrawide cinema).
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Video","Format":"AVC",
+        "Width":"1920","Height":"800","FrameRate":"24.000"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("1920x800 (2.40)")));
+}
+
+void TestMediaInfo::video_size_prefersDisplayAspectRatio()
+{
+    // Anamorphic case: raw 720/480 = 1.5 but DisplayAspectRatio says 1.778
+    // (NTSC 16:9 DVD). Parser must use the DAR, not compute from pixels.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Video","Format":"MPEG-2 Video",
+        "Width":"720","Height":"480","FrameRate":"29.970",
+        "DisplayAspectRatio":"1.778"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("720x480 (1.78)")));
+}
+
+void TestMediaInfo::video_size_prefersOriginalDar()
+{
+    // Both DisplayAspectRatio and DisplayAspectRatio_Original present.
+    // The _Original variant wins, mirroring the FrameRate_Original and
+    // ChannelPositions_Original preference pattern elsewhere in the parser.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Video","Format":"MPEG-2 Video",
+        "Width":"720","Height":"480","FrameRate":"29.970",
+        "DisplayAspectRatio":"1.778",
+        "DisplayAspectRatio_Original":"1.333"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "), QStringLiteral("720x480 (1.33)")));
+}
+
+void TestMediaInfo::video_size_missingDimensions()
+{
+    // No Width/Height → no Size row at all. The codec row is still emitted.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"Video","Format":"AVC","FrameRate":"24.000"
     }]}})";
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
-    QCOMPARE(rows[0].first, QStringLiteral("MPEG-2 Video "));
-    QCOMPARE(rows[0].second, QStringLiteral("720x480 @ 23.976fps"));
+    QCOMPARE(rows[0], Row(QStringLiteral("AVC "), QStringLiteral("24fps")));
 }
 
 // ----------------------------------------------------------------------
@@ -644,25 +807,28 @@ void TestMediaInfo::general_without_format_skipped()
 void TestMediaInfo::realistic_fixture()
 {
     // Values match a plausible `mediainfo --Output=JSON` dump: a 1.5 MiB
-    // H.264 clip in an MP4 container, 23.976 fps, 1080p, with English
-    // FLAC audio (5.1 channels), English SDH subtitles, and a
+    // H.264 clip in an MP4 container, 23.976 fps 1080p at 5 Mbps VBR, with
+    // English FLAC audio (5.1 channels), English SDH subtitles, and a
     // File_Modified_Date_Local of 2010 Dec 11. Duration is 1h23m45s (5025 s).
+    // The Video row now splits into a codec row (fps + bitrate) and a
+    // separate Size row (WxH + aspect).
     const QByteArray json = R"({"media":{"track":[
-        {"@type":"General","Format":"MPEG-4","FileSize":"1572864","File_Modified_Date_Local":"2010-12-11 23:46:17","Duration":"5025.000"},
+        {"@type":"General","Format":"MPEG-4","FileSize":"1572864","File_Modified_Date_Local":"2010-12-11 23:46:17","Duration":"5025.000","OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"},
         {"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","FrameRate":"23.976"},
         {"@type":"Audio","Format":"FLAC","Language":"English","ChannelPositions":"Front: L C R, Side: L R, LFE"},
         {"@type":"Text","Language":"English","Title":"SDH"}
     ]}})";
 
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 6);
+    QCOMPARE(rows.size(), 7);
 
     QCOMPARE(rows[0], Row(QStringLiteral("Format "),    QStringLiteral("MPEG-4 (1.5MiB)")));
     QCOMPARE(rows[1], Row(QStringLiteral("Date "),      QStringLiteral("2010 Dec 11")));
     QCOMPARE(rows[2], Row(QStringLiteral("Duration "),  QStringLiteral("1h23m45s")));
-    QCOMPARE(rows[3], Row(QStringLiteral("AVC "),       QStringLiteral("1920x1080 @ 23.976fps")));
-    QCOMPARE(rows[4], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
-    QCOMPARE(rows[5], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
+    QCOMPARE(rows[3], Row(QStringLiteral("AVC "),       QStringLiteral("23.976fps @ VBR 5Mbps")));
+    QCOMPARE(rows[4], Row(QStringLiteral("Size "),      QStringLiteral("1920x1080 (1.78)")));
+    QCOMPARE(rows[5], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
+    QCOMPARE(rows[6], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
 }
 
 QTEST_APPLESS_MAIN(TestMediaInfo)
