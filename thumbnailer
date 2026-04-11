@@ -23,7 +23,7 @@ LINK="/tmp/thumbnailer-$$".$BASE_EXT
 thumb_frame()
 {
 	local frame="$1"
-	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW" 2>&1 >> "$LOG"
+	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW" >> "$LOG" 2>&1
 }
 
 do_thumbnail()
@@ -63,7 +63,7 @@ do_thumbnail()
 do_json()
 {
 	ln -sf "$@" "$LINK"
-	if mediainfo --Output=JSON "$LINK" > "$NEW".json ; then
+	if mediainfo --Output=JSON "$LINK" > "$NEW".json 2>> "$LOG" ; then
 		mv "$NEW".json "$JSON"
 	fi
 	rm -f "$LINK"

@@ -264,9 +264,18 @@ void MainWindow::thumbnailStartNext()
                 QString thumbnail = QString::fromUtf8(proc->readAllStandardOutput()).split('\n').value(0);
                 qDebug() << "thumbnailer done with " << mediaPathName << " got " << thumbnail;
 
-                qDebug() << "current:" << currentPath << " path:" << mediaPathName;
-                if (!thumbnail.isEmpty() && currentPath == mediaPathName)
-                    thumbnailDisplay(thumbnail);
+                // Sanity-check the stdout: if the script ever leaks a stderr
+                // line ahead of its final `echo "$THUMB"`, `thumbnail` won't
+                // point at a real file. Reject it here so we don't feed
+                // garbage into QImage/QFile downstream.
+                if (thumbnail.isEmpty() || !QFileInfo(thumbnail).isFile()) {
+                    qDebug() << "thumbnailer returned bogus path for " << mediaPathName
+                             << " : " << thumbnail;
+                } else {
+                    qDebug() << "current:" << currentPath << " path:" << mediaPathName;
+                    if (currentPath == mediaPathName)
+                        thumbnailDisplay(thumbnail);
+                }
             }
 
             thumbnailStartNext();
