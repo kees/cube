@@ -280,10 +280,13 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
         break;
     case Qt::Key_Up:
     case Qt::Key_Down:
-        /* Only request a thumbnail/refresh when we've come to a stop in a single position. */
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        /* Only request a thumbnail when we've come to a stop in a single position. */
         if (!event->isAutoRepeat()) {
-            this->thumbnailRequest(currentPath);
-            this->moveWatcher(currentIndex);
+            if (!fs->isDir(currentIndex))
+                this->thumbnailRequest(currentPath);
+            //this->moveWatcher(currentIndex);
         }
         break;
     default:
