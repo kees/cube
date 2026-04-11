@@ -142,8 +142,8 @@ mpv_pid=$!
 
 # Let the video cache, start, and initialize audio on the stereo, then
 # unpause it. (It starts paused from "pause=yes" in ~/.config/mpv/mpv.conf)
-sleep 0.5
-(sleep 0.5;
+sleep 1.0
+(sleep 1.0;
  echo '{ "command": ["set_property", "pause", false] }') | \
 	socat - "$socket" &
 wait $mpv_pid
