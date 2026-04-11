@@ -23,7 +23,14 @@ LINK="/tmp/thumbnailer-$$".$BASE_EXT
 thumb_frame()
 {
 	local frame="$1"
-	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no --vf=scale=-1:720 --start="$frame" --frames=1 --o="$NEW" >> "$LOG" 2>&1
+	# Anamorphic-safe scale: first multiply the coded width by SAR (sample
+	# aspect ratio) to convert to square-pixel display dimensions, then
+	# scale to the 720-tall thumbnail target. Old AVI encodings (MPEG-4
+	# ASP, MPEG-2, DV) often use non-square pixels; without the first
+	# pass, a 720x480 NTSC 16:9 source would thumbnail to 1080x720 instead
+	# of 1280x720 and look horizontally squashed. For square-pixel
+	# sources, sar=1 and the first scale is a no-op.
+	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no "--vf=lavfi=[scale=iw*sar:ih,scale=-1:720]" --start="$frame" --frames=1 --o="$NEW" >> "$LOG" 2>&1
 }
 
 do_thumbnail()

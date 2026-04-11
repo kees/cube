@@ -84,4 +84,32 @@ touch -d "2030-01-01 00:00:00" "$MEDIA"
 REGEN=$(stat -c '%.9Y' "$THUMB")
 [ "$REGEN" != "$BEFORE" ] || fail "stale media did not trigger regeneration"
 
+# --- Test 5: square-pixel source produces the expected 720-tall thumbnail. ---
+# The synthesized sample.mp4 is 320x240 with SAR=1:1, so scaling to 720 tall
+# with auto width gives 960x720 (= 320 * 720/240). Pins the square-pixel path
+# of the anamorphic-safe `scale=iw*sar:ih,scale=-1:720` filter chain.
+DIMS=$(identify -format '%wx%h' "$THUMB")
+[ "$DIMS" = "960x720" ] || fail "square-pixel thumb dims wrong: got '$DIMS' expected 960x720"
+
+# --- Test 6: anamorphic source is corrected to display aspect, not coded. ---
+# Synthesize a second clip with the SAR deliberately set to 2:1 so the coded
+# frame is 640x480 but the display aspect is 1280x480 (DAR 8:3). With the
+# anamorphic-safe filter, the 720-tall thumbnail should be 1920x720. Under
+# the old `scale=-1:720` filter (which ignored SAR entirely) it would have
+# come out as 960x720 — the squashed look that motivated the fix.
+ANA="$TESTDIR/anamorphic.mp4"
+ffmpeg -loglevel error \
+	-f lavfi -i testsrc=duration=1:size=640x480:rate=30 \
+	-f lavfi -i sine=frequency=440:duration=1 \
+	-vf setsar=2/1 \
+	-c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+	-c:a aac -shortest -y "$ANA" \
+	|| fail "ffmpeg failed to synthesize anamorphic media"
+
+ANA_THUMB=$("$THUMBNAILER" "$ANA")
+[ -f "$ANA_THUMB" ] || fail "anamorphic thumbnail not created at $ANA_THUMB"
+ANA_DIMS=$(identify -format '%wx%h' "$ANA_THUMB")
+[ "$ANA_DIMS" = "1920x720" ] \
+	|| fail "anamorphic thumb dims wrong: got '$ANA_DIMS' expected 1920x720 (would be 960x720 under the old non-SAR-aware filter)"
+
 echo "OK: test_thumbnailer.sh"
