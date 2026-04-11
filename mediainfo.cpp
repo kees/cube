@@ -201,14 +201,18 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             }
             rows.append({video + " ", details});
 
-            // Size row: "WxH (aspect)". Prefer mediainfo's own
-            // DisplayAspectRatio (which already accounts for anamorphic
-            // SAR — e.g. reports 1.778 for a 720x480 NTSC 16:9 DVD even
-            // though raw w/h would give 1.5), with the usual _Original-
-            // first preference for telecined content. If neither DAR field
-            // is present, fall back to raw width/height arithmetic. Format
-            // the aspect to exactly 2 decimal places so the standard
-            // cinema values (1.33, 1.78, 1.85, 2.39, ...) round cleanly.
+            // Resolution row. Label reflects the height tier
+            // ("SD"/"HD"/"Full HD"/"2K"/"4K"/"8K", or a generic
+            // "Resolution" for heights above 8K), value is "WxH (aspect)".
+            //
+            // Aspect: prefer mediainfo's own DisplayAspectRatio (which
+            // already accounts for anamorphic SAR — e.g. reports 1.778
+            // for a 720x480 NTSC 16:9 DVD even though raw w/h would give
+            // 1.5), with the usual _Original-first preference for
+            // telecined content. If neither DAR field is present, fall
+            // back to raw width/height arithmetic. Format to exactly 2
+            // decimal places so standard cinema values (1.33, 1.78, 1.85,
+            // 2.39, ...) round cleanly.
             const QString width = info["Width"].toString();
             const QString height = info["Height"].toString();
             if (!width.isEmpty() && !height.isEmpty()) {
@@ -227,7 +231,23 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
                 QString sizeValue = width + "x" + height;
                 if (dar > 0)
                     sizeValue += QString(" (%1)").arg(QString::number(dar, 'f', 2));
-                rows.append({QStringLiteral("Size "), sizeValue});
+
+                // Tier the label by height using consumer-display naming
+                // thresholds. Anything above 4320p is rare enough that a
+                // generic "Resolution" fallback is preferable to inventing
+                // a name.
+                const int h = height.toInt();
+                QString label = QStringLiteral("Resolution ");
+                if (h > 0) {
+                    if      (h <=  480) label = QStringLiteral("SD ");
+                    else if (h <=  720) label = QStringLiteral("HD ");
+                    else if (h <= 1080) label = QStringLiteral("Full HD ");
+                    else if (h <= 1440) label = QStringLiteral("2K ");
+                    else if (h <= 2160) label = QStringLiteral("4K ");
+                    else if (h <= 4320) label = QStringLiteral("8K ");
+                    // else leaves label as "Resolution " (above 8K).
+                }
+                rows.append({label, sizeValue});
             }
         }
         if (info["@type"] == "Audio") {
