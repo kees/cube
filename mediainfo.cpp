@@ -64,6 +64,37 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 
             rows.append({QStringLiteral("Format "), format});
 
+            // File modification date as "YYYY Mon D" (e.g. "2010 Dec 11").
+            // Source is mediainfo's "File_Modified_Date_Local" field, which
+            // comes in the fixed form "yyyy-MM-dd HH:mm:ss"; we only need
+            // the date portion. Month name is looked up in a C-locale table
+            // instead of going through Qt's locale-dependent "MMM" format
+            // so a user with a non-English locale still gets "Dec" not
+            // "Dez" / "déc." etc. (and so the tests stay deterministic).
+            if (info["File_Modified_Date_Local"].isString()) {
+                const QString dateStr = info["File_Modified_Date_Local"].toString();
+                if (dateStr.length() >= 10 && dateStr[4] == '-' && dateStr[7] == '-') {
+                    bool yearOk = false, monthOk = false, dayOk = false;
+                    const int year  = dateStr.left(4).toInt(&yearOk);
+                    const int month = dateStr.mid(5, 2).toInt(&monthOk);
+                    const int day   = dateStr.mid(8, 2).toInt(&dayOk);
+                    if (yearOk && monthOk && dayOk
+                            && year >= 1
+                            && month >= 1 && month <= 12
+                            && day >= 1 && day <= 31) {
+                        static const char *const monthNames[12] = {
+                            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                        };
+                        rows.append({QStringLiteral("Date "),
+                                     QString("%1 %2 %3")
+                                         .arg(year)
+                                         .arg(QLatin1String(monthNames[month - 1]))
+                                         .arg(day)});
+                    }
+                }
+            }
+
             if (info["Duration"].isString()) {
                 int seconds = info["Duration"].toString().toFloat();
                 int hours = seconds / 3600;

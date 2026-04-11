@@ -46,6 +46,16 @@ private slots:
     void duration_data();
     void duration();
 
+    // --- General: File_Modified_Date_Local parsing ---
+    void date_example();
+    void date_allMonths_data();
+    void date_allMonths();
+    void date_unpaddedDay();
+    void date_missing();
+    void date_malformed();
+    void date_invalidMonth();
+    void date_positionBetweenFormatAndDuration();
+
     // --- Video: fps trailing-zero strip + " Visual" chop + WxH details ---
     void video_fpsTrim_data();
     void video_fpsTrim();
@@ -173,6 +183,115 @@ void TestMediaInfo::duration()
     QCOMPARE(rows.size(), 2);
     QCOMPARE(rows[1].first, QStringLiteral("Duration "));
     QCOMPARE(rows[1].second, expectedDuration);
+}
+
+// ----------------------------------------------------------------------
+// General / File_Modified_Date_Local — "YYYY Mon D" output
+// ----------------------------------------------------------------------
+
+// Build a minimal General-only fixture with just Format and a date.
+static QByteArray dateJson(const QByteArray &modifiedLocal)
+{
+    return QByteArray("{\"media\":{\"track\":[{"
+                      "\"@type\":\"General\","
+                      "\"Format\":\"MPEG-4\","
+                      "\"FileSize\":\"1024\","
+                      "\"File_Modified_Date_Local\":\"") + modifiedLocal + "\"}]}}";
+}
+
+void TestMediaInfo::date_example()
+{
+    // Verbatim from the user's request: "2010-12-11 23:46:17" → "2010 Dec 11".
+    const Rows rows = parseMediaInfo(dateJson("2010-12-11 23:46:17"));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1].first, QStringLiteral("Date "));
+    QCOMPARE(rows[1].second, QStringLiteral("2010 Dec 11"));
+}
+
+void TestMediaInfo::date_allMonths_data()
+{
+    QTest::addColumn<QByteArray>("modified");
+    QTest::addColumn<QString>("expected");
+
+    // Verify the month-name lookup table, one row per month. Each row uses
+    // a distinct year/day so a bad index (off-by-one, reversed) would show
+    // up as a diff in multiple columns simultaneously.
+    QTest::newRow("Jan") << QByteArray("2020-01-15 00:00:00") << QString("2020 Jan 15");
+    QTest::newRow("Feb") << QByteArray("2021-02-28 10:20:30") << QString("2021 Feb 28");
+    QTest::newRow("Mar") << QByteArray("2022-03-10 01:02:03") << QString("2022 Mar 10");
+    QTest::newRow("Apr") << QByteArray("2023-04-01 12:00:00") << QString("2023 Apr 1");
+    QTest::newRow("May") << QByteArray("2024-05-05 05:05:05") << QString("2024 May 5");
+    QTest::newRow("Jun") << QByteArray("1999-06-30 23:59:59") << QString("1999 Jun 30");
+    QTest::newRow("Jul") << QByteArray("1999-07-04 12:34:56") << QString("1999 Jul 4");
+    QTest::newRow("Aug") << QByteArray("2000-08-20 08:15:00") << QString("2000 Aug 20");
+    QTest::newRow("Sep") << QByteArray("2005-09-09 09:09:09") << QString("2005 Sep 9");
+    QTest::newRow("Oct") << QByteArray("2010-10-31 18:00:00") << QString("2010 Oct 31");
+    QTest::newRow("Nov") << QByteArray("2015-11-11 11:11:11") << QString("2015 Nov 11");
+    QTest::newRow("Dec") << QByteArray("2010-12-11 23:46:17") << QString("2010 Dec 11");
+}
+
+void TestMediaInfo::date_allMonths()
+{
+    QFETCH(QByteArray, modified);
+    QFETCH(QString, expected);
+
+    const Rows rows = parseMediaInfo(dateJson(modified));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1].first, QStringLiteral("Date "));
+    QCOMPARE(rows[1].second, expected);
+}
+
+void TestMediaInfo::date_unpaddedDay()
+{
+    // Single-digit days render without a leading zero: "Sep 9", not "Sep 09".
+    const Rows rows = parseMediaInfo(dateJson("2005-09-09 09:09:09"));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[1].second, QStringLiteral("2005 Sep 9"));
+}
+
+void TestMediaInfo::date_missing()
+{
+    // No File_Modified_Date_Local field at all: no Date row, no crash. Just
+    // the Format row appears.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"General","Format":"MPEG-4","FileSize":"1024"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].first, QStringLiteral("Format "));
+}
+
+void TestMediaInfo::date_malformed()
+{
+    // Garbage in the date field should be ignored (no Date row emitted),
+    // not crash and not fall through to some half-parsed output.
+    QCOMPARE(parseMediaInfo(dateJson("not a date")).size(), 1);
+    QCOMPARE(parseMediaInfo(dateJson("2010/12/11 23:46:17")).size(), 1); // wrong separators
+    QCOMPARE(parseMediaInfo(dateJson("short")).size(), 1);               // too short
+    QCOMPARE(parseMediaInfo(dateJson("")).size(), 1);
+}
+
+void TestMediaInfo::date_invalidMonth()
+{
+    // Month out of 1..12 range is rejected.
+    QCOMPARE(parseMediaInfo(dateJson("2010-00-11 00:00:00")).size(), 1);
+    QCOMPARE(parseMediaInfo(dateJson("2010-13-11 00:00:00")).size(), 1);
+}
+
+void TestMediaInfo::date_positionBetweenFormatAndDuration()
+{
+    // The Date row must sit between Format and Duration: this is explicit
+    // in the UI contract and the most likely refactor hazard.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"General","Format":"MPEG-4","FileSize":"1024",
+        "File_Modified_Date_Local":"2010-12-11 23:46:17",
+        "Duration":"60.000"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[0].first, QStringLiteral("Format "));
+    QCOMPARE(rows[1], Row(QStringLiteral("Date "), QStringLiteral("2010 Dec 11")));
+    QCOMPARE(rows[2].first, QStringLiteral("Duration "));
 }
 
 // ----------------------------------------------------------------------
@@ -502,23 +621,24 @@ void TestMediaInfo::realistic_fixture()
 {
     // Values match a plausible `mediainfo --Output=JSON` dump: a 1.5 MiB
     // H.264 clip in an MP4 container, 23.976 fps, 1080p, with English
-    // FLAC audio (5.1 channels) and English SDH subtitles. Duration is
-    // 1h23m45s (5025 s).
+    // FLAC audio (5.1 channels), English SDH subtitles, and a
+    // File_Modified_Date_Local of 2010 Dec 11. Duration is 1h23m45s (5025 s).
     const QByteArray json = R"({"media":{"track":[
-        {"@type":"General","Format":"MPEG-4","FileSize":"1572864","Duration":"5025.000"},
+        {"@type":"General","Format":"MPEG-4","FileSize":"1572864","File_Modified_Date_Local":"2010-12-11 23:46:17","Duration":"5025.000"},
         {"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","FrameRate":"23.976"},
         {"@type":"Audio","Format":"FLAC","Language":"English","ChannelPositions":"Front: L C R, Side: L R, LFE"},
         {"@type":"Text","Language":"English","Title":"SDH"}
     ]}})";
 
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 5);
+    QCOMPARE(rows.size(), 6);
 
     QCOMPARE(rows[0], Row(QStringLiteral("Format "),    QStringLiteral("MPEG-4 (1.5MiB)")));
-    QCOMPARE(rows[1], Row(QStringLiteral("Duration "),  QStringLiteral("1h23m45s")));
-    QCOMPARE(rows[2], Row(QStringLiteral("AVC "),       QStringLiteral("1920x1080 @ 23.976fps")));
-    QCOMPARE(rows[3], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
-    QCOMPARE(rows[4], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Date "),      QStringLiteral("2010 Dec 11")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Duration "),  QStringLiteral("1h23m45s")));
+    QCOMPARE(rows[3], Row(QStringLiteral("AVC "),       QStringLiteral("1920x1080 @ 23.976fps")));
+    QCOMPARE(rows[4], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
+    QCOMPARE(rows[5], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
 }
 
 QTEST_APPLESS_MAIN(TestMediaInfo)
