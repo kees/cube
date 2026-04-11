@@ -22,7 +22,11 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 
         if (info["@type"] == "General" && info["Format"].isString()) {
             QString format = info["Format"].toString();
-            size_t size = info["FileSize"].toString().toFloat();
+            // Parse as integer, not float. `toFloat()` silently rounds any
+            // FileSize above ~16 MiB (single precision only has 24 bits of
+            // mantissa), so a file just over 1 GiB would fail the GiB-branch
+            // threshold by one and mis-format as "1024MiB".
+            size_t size = info["FileSize"].toString().toLongLong();
             size_t divider = 1;
             QString si = "B";
 

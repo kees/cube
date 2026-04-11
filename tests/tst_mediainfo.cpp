@@ -99,19 +99,12 @@ void TestMediaInfo::formatSize_data()
     QTest::newRow("1048577 -> 1MiB")  << QByteArray("1048577") << QString("MPEG-4 (1MiB)");
     // 1.5 MiB.
     QTest::newRow("1572864 -> 1.5MiB") << QByteArray("1572864") << QString("MPEG-4 (1.5MiB)");
-    // KNOWN QUIRK — pinning current behaviour: 1073741825 is *not* exactly
-    // representable in IEEE-754 single precision, and FileSize is parsed via
-    // `toFloat()`. The value rounds down to 1073741824 on the way in, so the
-    // `size > 1073741824` test in the GiB branch is false and formatting
-    // stays in MiB, producing "1024MiB" instead of "1GiB". Switching the
-    // parse to `toLongLong()` would fix this; this test pins the current
-    // wrong-but-stable output so any intentional fix is visible as a diff.
-    QTest::newRow("1073741825 bytes (float-lossy -> 1024MiB)")
-        << QByteArray("1073741825") << QString("MPEG-4 (1024MiB)");
-    // 2.5 GiB expressed as 2684354560 bytes. This value IS exactly
-    // representable as a float (two bits set in the significand), so the
-    // GiB branch actually fires and the decimal computation produces "2.5".
-    // Exercises the GiB code path cleanly.
+    // Just-above-1-GiB boundary — regression test for the `toFloat` parsing
+    // bug that used to silently lose precision at values above ~16 MiB and
+    // mis-format this as "1024MiB". `toLongLong()` handles it exactly.
+    QTest::newRow("1073741825 -> 1GiB")
+        << QByteArray("1073741825") << QString("MPEG-4 (1GiB)");
+    // 2.5 GiB: exercises the GiB branch plus the tenths-decimal code path.
     QTest::newRow("2684354560 -> 2.5GiB")
         << QByteArray("2684354560") << QString("MPEG-4 (2.5GiB)");
 }
