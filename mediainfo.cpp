@@ -39,80 +39,12 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
         QJsonObject info = track[i].toObject();
 
         if (info["@type"] == "General" && info["Format"].isString()) {
-            QString format = info["Format"].toString();
-            // Parse as integer, not float. `toFloat()` silently rounds any
-            // FileSize above ~16 MiB (single precision only has 24 bits of
-            // mantissa), so a file just over 1 GiB would fail the GiB-branch
-            // threshold by one and mis-format as "1024MiB".
-            size_t size = info["FileSize"].toString().toLongLong();
-            size_t divider = 1;
-            QString si = "B";
+            const QString format = info["Format"].toString();
 
-            // `>=` (not `>`) at each boundary so exactly 1024 B is 1 KiB,
-            // exactly 1 MiB is 1 MiB, etc. — the `>` form used to render
-            // 1024 B as "1024B" and 1 MiB as "1024KiB".
-            if (size >= 1024 * divider) {
-                si = "KiB";
-                divider *= 1024;
-            }
-            if (size >= 1024 * divider) {
-                si = "MiB";
-                divider *= 1024;
-            }
-            if (size >= 1024 * divider) {
-                si = "GiB";
-                divider *= 1024;
-            }
-            size_t whole = size;
-            size_t tenths = 0;
-            if (divider > 10) {
-                // Multiply before dividing so we don't lose precision from
-                // `divider / 10` truncating (e.g. 1024/10 = 102 instead of
-                // 102.4, which skews near-boundary sizes by ~0.4%). Safe
-                // from overflow: even a 1 PB file (2^50 B) times 10 fits
-                // comfortably in size_t on any 64-bit platform.
-                whole = size * 10 / divider;
-                tenths = whole % 10;
-                whole /= 10;
-            }
-            format += QString(" (%1").arg(whole);
-            if (tenths != 0)
-                format += QString(".%1").arg(tenths);
-            format += QString("%1)").arg(si);
-
-            rows.append({QStringLiteral("Format "), format});
-
-            // File modification date as "YYYY Mon D" (e.g. "2010 Dec 11").
-            // Source is mediainfo's "File_Modified_Date_Local" field, which
-            // comes in the fixed form "yyyy-MM-dd HH:mm:ss"; we only need
-            // the date portion. Month name is looked up in a C-locale table
-            // instead of going through Qt's locale-dependent "MMM" format
-            // so a user with a non-English locale still gets "Dec" not
-            // "Dez" / "déc." etc. (and so the tests stay deterministic).
-            if (info["File_Modified_Date_Local"].isString()) {
-                const QString dateStr = info["File_Modified_Date_Local"].toString();
-                if (dateStr.length() >= 10 && dateStr[4] == '-' && dateStr[7] == '-') {
-                    bool yearOk = false, monthOk = false, dayOk = false;
-                    const int year  = dateStr.left(4).toInt(&yearOk);
-                    const int month = dateStr.mid(5, 2).toInt(&monthOk);
-                    const int day   = dateStr.mid(8, 2).toInt(&dayOk);
-                    if (yearOk && monthOk && dayOk
-                            && year >= 1
-                            && month >= 1 && month <= 12
-                            && day >= 1 && day <= 31) {
-                        static const char *const monthNames[12] = {
-                            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-                        };
-                        rows.append({QStringLiteral("Date "),
-                                     QString("%1 %2 %3")
-                                         .arg(year)
-                                         .arg(QLatin1String(monthNames[month - 1]))
-                                         .arg(day)});
-                    }
-                }
-            }
-
+            // --- Duration row ---
+            // Emitted first so the duration appears above the format-name
+            // row in the UI. (Conceptually odd — duration before you know
+            // what the file is — but it's the requested layout.)
             if (info["Duration"].isString()) {
                 int seconds = info["Duration"].toString().toFloat();
                 int hours = seconds / 3600;
@@ -130,6 +62,104 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 
                 rows.append({QStringLiteral("Duration "), duration});
             }
+
+            // --- File size ("1.5MiB"), optional ---
+            // Computed from FileSize. Omitted entirely when FileSize is
+            // absent or zero (rather than rendered as the nonsensical "0B"
+            // the old code would produce). Parsed via toLongLong, not
+            // toFloat, because single-precision float only has 24 bits of
+            // mantissa and silently rounds any FileSize above ~16 MiB —
+            // which used to mis-format anything just over 1 GiB as
+            // "1024MiB".
+            QString sizeStr;
+            if (info["FileSize"].isString()) {
+                const size_t size = info["FileSize"].toString().toLongLong();
+                if (size > 0) {
+                    size_t divider = 1;
+                    QString si = "B";
+
+                    // `>=` (not `>`) at each boundary so exactly 1024 B is
+                    // 1 KiB, exactly 1 MiB is 1 MiB, etc. The `>` form used
+                    // to render 1024 B as "1024B" and 1 MiB as "1024KiB".
+                    if (size >= 1024 * divider) {
+                        si = "KiB";
+                        divider *= 1024;
+                    }
+                    if (size >= 1024 * divider) {
+                        si = "MiB";
+                        divider *= 1024;
+                    }
+                    if (size >= 1024 * divider) {
+                        si = "GiB";
+                        divider *= 1024;
+                    }
+                    size_t whole = size;
+                    size_t tenths = 0;
+                    if (divider > 10) {
+                        // Multiply before dividing so we don't lose
+                        // precision from `divider / 10` truncating (e.g.
+                        // 1024/10 = 102 instead of 102.4, which skews
+                        // near-boundary sizes by ~0.4%). Safe from
+                        // overflow: even a 1 PB file (2^50 B) times 10
+                        // fits comfortably in size_t on 64-bit platforms.
+                        whole = size * 10 / divider;
+                        tenths = whole % 10;
+                        whole /= 10;
+                    }
+                    sizeStr = QString::number(whole);
+                    if (tenths != 0)
+                        sizeStr += QString(".%1").arg(tenths);
+                    sizeStr += si;
+                }
+            }
+
+            // --- File modification date ("2010 Dec 11"), optional ---
+            // Source is mediainfo's File_Modified_Date_Local field, a
+            // fixed "yyyy-MM-dd HH:mm:ss" string; only the date portion is
+            // used. Month name is looked up in a C-locale table rather
+            // than via Qt's locale-dependent "MMM" format, so a non-
+            // English host still renders "Dec" (and the tests stay
+            // deterministic).
+            QString dateStr;
+            if (info["File_Modified_Date_Local"].isString()) {
+                const QString raw = info["File_Modified_Date_Local"].toString();
+                if (raw.length() >= 10 && raw[4] == '-' && raw[7] == '-') {
+                    bool yearOk = false, monthOk = false, dayOk = false;
+                    const int year  = raw.left(4).toInt(&yearOk);
+                    const int month = raw.mid(5, 2).toInt(&monthOk);
+                    const int day   = raw.mid(8, 2).toInt(&dayOk);
+                    if (yearOk && monthOk && dayOk
+                            && year >= 1
+                            && month >= 1 && month <= 12
+                            && day >= 1 && day <= 31) {
+                        static const char *const monthNames[12] = {
+                            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                        };
+                        dateStr = QString("%1 %2 %3")
+                                      .arg(year)
+                                      .arg(QLatin1String(monthNames[month - 1]))
+                                      .arg(day);
+                    }
+                }
+            }
+
+            // --- Assemble the format-name row ---
+            // Label is the format name itself (like "MPEG-4 ", "Matroska ",
+            // "AVI "), mirroring how the Video codec row uses the video
+            // codec name as its label. Value is "<size> (<date>)" when both
+            // are available. With only one part, the parens are dropped
+            // (no point wrapping a lone annotation). With neither, the
+            // value is empty and the row still appears so the format name
+            // itself is visible.
+            QString value;
+            if (!sizeStr.isEmpty() && !dateStr.isEmpty())
+                value = sizeStr + " (" + dateStr + ")";
+            else if (!sizeStr.isEmpty())
+                value = sizeStr;
+            else if (!dateStr.isEmpty())
+                value = dateStr;
+            rows.append({format + " ", value});
         }
         if (info["@type"] == "Video") {
             QString video = info["Format"].toString();

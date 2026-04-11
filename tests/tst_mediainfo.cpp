@@ -46,7 +46,7 @@ private slots:
     void duration_data();
     void duration();
 
-    // --- General: File_Modified_Date_Local parsing ---
+    // --- General: File_Modified_Date_Local merged into format-name row ---
     void date_example();
     void date_allMonths_data();
     void date_allMonths();
@@ -54,7 +54,11 @@ private slots:
     void date_missing();
     void date_malformed();
     void date_invalidMonth();
-    void date_positionBetweenFormatAndDuration();
+    void date_mergesIntoFormatRow();
+
+    // --- Format-name row: combinatoric coverage of size/date presence ---
+    void formatRow_noSizeNoDate();
+    void formatRow_dateOnly();
 
     // --- Video: codec row (fps/bitrate) and Size row (WxH/aspect) ---
     void video_fpsTrim_data();
@@ -108,57 +112,57 @@ private slots:
 void TestMediaInfo::formatSize_data()
 {
     QTest::addColumn<QByteArray>("fileSize");
-    QTest::addColumn<QString>("expectedFormat");
+    QTest::addColumn<QString>("expectedSize");
 
     // Sub-KiB: raw byte count, no decimal (divider=1, divider>10 is false).
-    QTest::newRow("500 bytes")        << QByteArray("500")      << QString("MPEG-4 (500B)");
+    QTest::newRow("500 bytes")        << QByteArray("500")      << QString("500B");
     // One byte below the KiB boundary — last value that's still shown as bytes.
-    QTest::newRow("1023 bytes")       << QByteArray("1023")     << QString("MPEG-4 (1023B)");
+    QTest::newRow("1023 bytes")       << QByteArray("1023")     << QString("1023B");
     // Exact KiB boundary: `>=` means 1024 B is already 1 KiB.
-    QTest::newRow("1024 -> 1KiB")     << QByteArray("1024")     << QString("MPEG-4 (1KiB)");
+    QTest::newRow("1024 -> 1KiB")     << QByteArray("1024")     << QString("1KiB");
     // Just above the boundary.
-    QTest::newRow("1025 -> 1KiB")     << QByteArray("1025")     << QString("MPEG-4 (1KiB)");
+    QTest::newRow("1025 -> 1KiB")     << QByteArray("1025")     << QString("1KiB");
     // Whole-KiB value with no decimal emitted (tenths == 0).
-    QTest::newRow("2048 -> 2KiB")     << QByteArray("2048")     << QString("MPEG-4 (2KiB)");
+    QTest::newRow("2048 -> 2KiB")     << QByteArray("2048")     << QString("2KiB");
     // 2.5 KiB: 2560 / 102 = 25, tenths = 5, whole = 2 => "2.5KiB".
-    QTest::newRow("2560 -> 2.5KiB")   << QByteArray("2560")     << QString("MPEG-4 (2.5KiB)");
+    QTest::newRow("2560 -> 2.5KiB")   << QByteArray("2560")     << QString("2.5KiB");
     // One byte below the MiB boundary — regression test for the decimal
     // arithmetic: should be 1023.9 KiB, not 1028 KiB (which is what the
     // old `size / (divider / 10)` form used to compute).
     QTest::newRow("1048575 -> 1023.9KiB")
-        << QByteArray("1048575") << QString("MPEG-4 (1023.9KiB)");
+        << QByteArray("1048575") << QString("1023.9KiB");
     // Exact MiB boundary — regression test for `>=` semantics.
-    QTest::newRow("1048576 -> 1MiB")  << QByteArray("1048576")  << QString("MPEG-4 (1MiB)");
+    QTest::newRow("1048576 -> 1MiB")  << QByteArray("1048576")  << QString("1MiB");
     // Just above the MiB boundary.
-    QTest::newRow("1048577 -> 1MiB")  << QByteArray("1048577")  << QString("MPEG-4 (1MiB)");
+    QTest::newRow("1048577 -> 1MiB")  << QByteArray("1048577")  << QString("1MiB");
     // 1.5 MiB.
-    QTest::newRow("1572864 -> 1.5MiB") << QByteArray("1572864") << QString("MPEG-4 (1.5MiB)");
+    QTest::newRow("1572864 -> 1.5MiB") << QByteArray("1572864") << QString("1.5MiB");
     // One byte below the GiB boundary — companion to the 1048575 case.
     // Should format as 1023.9 MiB, not 1024 MiB.
     QTest::newRow("1073741823 -> 1023.9MiB")
-        << QByteArray("1073741823") << QString("MPEG-4 (1023.9MiB)");
+        << QByteArray("1073741823") << QString("1023.9MiB");
     // Exact GiB boundary — regression test for `>=` semantics.
     QTest::newRow("1073741824 -> 1GiB")
-        << QByteArray("1073741824") << QString("MPEG-4 (1GiB)");
+        << QByteArray("1073741824") << QString("1GiB");
     // Just-above-1-GiB boundary — also a regression test for the `toFloat`
     // parsing bug that used to silently lose precision at values above
     // ~16 MiB and mis-format this as "1024MiB". `toLongLong()` handles it.
     QTest::newRow("1073741825 -> 1GiB")
-        << QByteArray("1073741825") << QString("MPEG-4 (1GiB)");
+        << QByteArray("1073741825") << QString("1GiB");
     // 2.5 GiB: exercises the GiB branch plus the tenths-decimal code path.
     QTest::newRow("2684354560 -> 2.5GiB")
-        << QByteArray("2684354560") << QString("MPEG-4 (2.5GiB)");
+        << QByteArray("2684354560") << QString("2.5GiB");
 }
 
 void TestMediaInfo::formatSize()
 {
     QFETCH(QByteArray, fileSize);
-    QFETCH(QString, expectedFormat);
+    QFETCH(QString, expectedSize);
 
     const Rows rows = parseMediaInfo(generalJson("MPEG-4", fileSize));
     QCOMPARE(rows.size(), 1);
-    QCOMPARE(rows[0].first, QStringLiteral("Format "));
-    QCOMPARE(rows[0].second, expectedFormat);
+    QCOMPARE(rows[0].first, QStringLiteral("MPEG-4 "));
+    QCOMPARE(rows[0].second, expectedSize);
 }
 
 // ----------------------------------------------------------------------
@@ -189,17 +193,24 @@ void TestMediaInfo::duration()
     QFETCH(QByteArray, durationSeconds);
     QFETCH(QString, expectedDuration);
 
+    // Duration row is emitted *first*, above the format-name row.
     const Rows rows = parseMediaInfo(generalJson("MP4", "1024", durationSeconds));
     QCOMPARE(rows.size(), 2);
-    QCOMPARE(rows[1].first, QStringLiteral("Duration "));
-    QCOMPARE(rows[1].second, expectedDuration);
+    QCOMPARE(rows[0].first, QStringLiteral("Duration "));
+    QCOMPARE(rows[0].second, expectedDuration);
+    QCOMPARE(rows[1], Row(QStringLiteral("MP4 "), QStringLiteral("1KiB")));
 }
 
 // ----------------------------------------------------------------------
-// General / File_Modified_Date_Local — "YYYY Mon D" output
+// General / File_Modified_Date_Local — merges into the format-name row
+// as "(YYYY Mon D)" following the file size. There is no standalone Date
+// row; date info is assembled into the value of the "<format> " row.
 // ----------------------------------------------------------------------
 
-// Build a minimal General-only fixture with just Format and a date.
+// Build a minimal General-only fixture with Format, a 1 KiB FileSize, and
+// a File_Modified_Date_Local value. With FileSize="1024" the size portion
+// of the row value is always "1KiB", so every expected value below has the
+// form "1KiB (<date>)" against a label of "MPEG-4 ".
 static QByteArray dateJson(const QByteArray &modifiedLocal)
 {
     return QByteArray("{\"media\":{\"track\":[{"
@@ -211,97 +222,151 @@ static QByteArray dateJson(const QByteArray &modifiedLocal)
 
 void TestMediaInfo::date_example()
 {
-    // Verbatim from the user's request: "2010-12-11 23:46:17" → "2010 Dec 11".
+    // Verbatim from the user's request: "2010-12-11 23:46:17" → "2010 Dec 11",
+    // rendered inside the format-name row as "1KiB (2010 Dec 11)".
     const Rows rows = parseMediaInfo(dateJson("2010-12-11 23:46:17"));
-    QCOMPARE(rows.size(), 2);
-    QCOMPARE(rows[1].first, QStringLiteral("Date "));
-    QCOMPARE(rows[1].second, QStringLiteral("2010 Dec 11"));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "),
+                          QStringLiteral("1KiB (2010 Dec 11)")));
 }
 
 void TestMediaInfo::date_allMonths_data()
 {
     QTest::addColumn<QByteArray>("modified");
-    QTest::addColumn<QString>("expected");
+    QTest::addColumn<QString>("expectedValue");
 
     // Verify the month-name lookup table, one row per month. Each row uses
     // a distinct year/day so a bad index (off-by-one, reversed) would show
     // up as a diff in multiple columns simultaneously.
-    QTest::newRow("Jan") << QByteArray("2020-01-15 00:00:00") << QString("2020 Jan 15");
-    QTest::newRow("Feb") << QByteArray("2021-02-28 10:20:30") << QString("2021 Feb 28");
-    QTest::newRow("Mar") << QByteArray("2022-03-10 01:02:03") << QString("2022 Mar 10");
-    QTest::newRow("Apr") << QByteArray("2023-04-01 12:00:00") << QString("2023 Apr 1");
-    QTest::newRow("May") << QByteArray("2024-05-05 05:05:05") << QString("2024 May 5");
-    QTest::newRow("Jun") << QByteArray("1999-06-30 23:59:59") << QString("1999 Jun 30");
-    QTest::newRow("Jul") << QByteArray("1999-07-04 12:34:56") << QString("1999 Jul 4");
-    QTest::newRow("Aug") << QByteArray("2000-08-20 08:15:00") << QString("2000 Aug 20");
-    QTest::newRow("Sep") << QByteArray("2005-09-09 09:09:09") << QString("2005 Sep 9");
-    QTest::newRow("Oct") << QByteArray("2010-10-31 18:00:00") << QString("2010 Oct 31");
-    QTest::newRow("Nov") << QByteArray("2015-11-11 11:11:11") << QString("2015 Nov 11");
-    QTest::newRow("Dec") << QByteArray("2010-12-11 23:46:17") << QString("2010 Dec 11");
+    QTest::newRow("Jan") << QByteArray("2020-01-15 00:00:00") << QString("1KiB (2020 Jan 15)");
+    QTest::newRow("Feb") << QByteArray("2021-02-28 10:20:30") << QString("1KiB (2021 Feb 28)");
+    QTest::newRow("Mar") << QByteArray("2022-03-10 01:02:03") << QString("1KiB (2022 Mar 10)");
+    QTest::newRow("Apr") << QByteArray("2023-04-01 12:00:00") << QString("1KiB (2023 Apr 1)");
+    QTest::newRow("May") << QByteArray("2024-05-05 05:05:05") << QString("1KiB (2024 May 5)");
+    QTest::newRow("Jun") << QByteArray("1999-06-30 23:59:59") << QString("1KiB (1999 Jun 30)");
+    QTest::newRow("Jul") << QByteArray("1999-07-04 12:34:56") << QString("1KiB (1999 Jul 4)");
+    QTest::newRow("Aug") << QByteArray("2000-08-20 08:15:00") << QString("1KiB (2000 Aug 20)");
+    QTest::newRow("Sep") << QByteArray("2005-09-09 09:09:09") << QString("1KiB (2005 Sep 9)");
+    QTest::newRow("Oct") << QByteArray("2010-10-31 18:00:00") << QString("1KiB (2010 Oct 31)");
+    QTest::newRow("Nov") << QByteArray("2015-11-11 11:11:11") << QString("1KiB (2015 Nov 11)");
+    QTest::newRow("Dec") << QByteArray("2010-12-11 23:46:17") << QString("1KiB (2010 Dec 11)");
 }
 
 void TestMediaInfo::date_allMonths()
 {
     QFETCH(QByteArray, modified);
-    QFETCH(QString, expected);
+    QFETCH(QString, expectedValue);
 
     const Rows rows = parseMediaInfo(dateJson(modified));
-    QCOMPARE(rows.size(), 2);
-    QCOMPARE(rows[1].first, QStringLiteral("Date "));
-    QCOMPARE(rows[1].second, expected);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "), expectedValue));
 }
 
 void TestMediaInfo::date_unpaddedDay()
 {
     // Single-digit days render without a leading zero: "Sep 9", not "Sep 09".
     const Rows rows = parseMediaInfo(dateJson("2005-09-09 09:09:09"));
-    QCOMPARE(rows.size(), 2);
-    QCOMPARE(rows[1].second, QStringLiteral("2005 Sep 9"));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("1KiB (2005 Sep 9)"));
 }
 
 void TestMediaInfo::date_missing()
 {
-    // No File_Modified_Date_Local field at all: no Date row, no crash. Just
-    // the Format row appears.
+    // No File_Modified_Date_Local field at all: row value drops the
+    // "(...)" suffix and is just the bare size.
     const QByteArray json = R"({"media":{"track":[{
         "@type":"General","Format":"MPEG-4","FileSize":"1024"
     }]}})";
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
-    QCOMPARE(rows[0].first, QStringLiteral("Format "));
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "), QStringLiteral("1KiB")));
 }
 
 void TestMediaInfo::date_malformed()
 {
-    // Garbage in the date field should be ignored (no Date row emitted),
-    // not crash and not fall through to some half-parsed output.
-    QCOMPARE(parseMediaInfo(dateJson("not a date")).size(), 1);
-    QCOMPARE(parseMediaInfo(dateJson("2010/12/11 23:46:17")).size(), 1); // wrong separators
-    QCOMPARE(parseMediaInfo(dateJson("short")).size(), 1);               // too short
-    QCOMPARE(parseMediaInfo(dateJson("")).size(), 1);
+    // Garbage in the date field should be silently ignored — the row
+    // value falls back to just the size ("1KiB") rather than crashing or
+    // producing half-parsed output.
+    const QString noDate = QStringLiteral("1KiB");
+    Rows rows;
+
+    rows = parseMediaInfo(dateJson("not a date"));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
+
+    rows = parseMediaInfo(dateJson("2010/12/11 23:46:17")); // wrong separators
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
+
+    rows = parseMediaInfo(dateJson("short"));               // too short
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
+
+    rows = parseMediaInfo(dateJson(""));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
 }
 
 void TestMediaInfo::date_invalidMonth()
 {
-    // Month out of 1..12 range is rejected.
-    QCOMPARE(parseMediaInfo(dateJson("2010-00-11 00:00:00")).size(), 1);
-    QCOMPARE(parseMediaInfo(dateJson("2010-13-11 00:00:00")).size(), 1);
+    // Month out of 1..12 range is rejected; row still appears without date.
+    const QString noDate = QStringLiteral("1KiB");
+    Rows rows;
+
+    rows = parseMediaInfo(dateJson("2010-00-11 00:00:00"));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
+
+    rows = parseMediaInfo(dateJson("2010-13-11 00:00:00"));
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, noDate);
 }
 
-void TestMediaInfo::date_positionBetweenFormatAndDuration()
+void TestMediaInfo::date_mergesIntoFormatRow()
 {
-    // The Date row must sit between Format and Duration: this is explicit
-    // in the UI contract and the most likely refactor hazard.
+    // Date info merges into the format-name row's value as the "(...)"
+    // annotation. Duration is its own row and is emitted *first*, above
+    // the format-name row. Pins that layout.
     const QByteArray json = R"({"media":{"track":[{
         "@type":"General","Format":"MPEG-4","FileSize":"1024",
         "File_Modified_Date_Local":"2010-12-11 23:46:17",
         "Duration":"60.000"
     }]}})";
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 3);
-    QCOMPARE(rows[0].first, QStringLiteral("Format "));
-    QCOMPARE(rows[1], Row(QStringLiteral("Date "), QStringLiteral("2010 Dec 11")));
-    QCOMPARE(rows[2].first, QStringLiteral("Duration "));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0], Row(QStringLiteral("Duration "),
+                          QStringLiteral("1m00s")));
+    QCOMPARE(rows[1], Row(QStringLiteral("MPEG-4 "),
+                          QStringLiteral("1KiB (2010 Dec 11)")));
+}
+
+void TestMediaInfo::formatRow_noSizeNoDate()
+{
+    // Neither FileSize nor File_Modified_Date_Local present — the format-
+    // name row still appears but with an empty value string. (Previously
+    // the size formatter would emit "(0B)" in this case; the gate on
+    // `size > 0` avoids that.)
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"General","Format":"MPEG-4"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "), QString()));
+}
+
+void TestMediaInfo::formatRow_dateOnly()
+{
+    // Date present, FileSize absent — the row value becomes just the bare
+    // date string. No parentheses, since there's no size for them to
+    // annotate; the date is the only piece of info being shown.
+    const QByteArray json = R"({"media":{"track":[{
+        "@type":"General","Format":"MPEG-4",
+        "File_Modified_Date_Local":"2010-12-11 23:46:17"
+    }]}})";
+    const Rows rows = parseMediaInfo(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0], Row(QStringLiteral("MPEG-4 "),
+                          QStringLiteral("2010 Dec 11")));
 }
 
 // ----------------------------------------------------------------------
@@ -402,9 +467,10 @@ void TestMediaInfo::video_fpsPrefersOriginal()
 
 void TestMediaInfo::video_bitrate_withMode()
 {
-    // Both mode and rate present → "<fps> @ VBR 5Mbps". Note: the General
-    // track also has Format so a Format row is emitted too. We assert the
-    // full row set to pin the order and row count.
+    // Both mode and rate present → "<fps> @ VBR 5Mbps". The General track
+    // has Format + FileSize, so a Matroska format-name row is also emitted
+    // (with the size as its value). We assert the full row set to pin
+    // order and row count.
     const QByteArray json = R"({"media":{"track":[
         {"@type":"General","Format":"Matroska","FileSize":"500",
          "OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"},
@@ -413,9 +479,9 @@ void TestMediaInfo::video_bitrate_withMode()
     ]}})";
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 3);
-    QCOMPARE(rows[0], Row(QStringLiteral("Format "), QStringLiteral("Matroska (500B)")));
-    QCOMPARE(rows[1], Row(QStringLiteral("AVC "),    QStringLiteral("23.976fps @ VBR 5Mbps")));
-    QCOMPARE(rows[2], Row(QStringLiteral("Size "),   QStringLiteral("1920x1080 (1.78)")));
+    QCOMPARE(rows[0], Row(QStringLiteral("Matroska "), QStringLiteral("500B")));
+    QCOMPARE(rows[1], Row(QStringLiteral("AVC "),      QStringLiteral("23.976fps @ VBR 5Mbps")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Size "),     QStringLiteral("1920x1080 (1.78)")));
 }
 
 void TestMediaInfo::video_bitrate_withoutMode()
@@ -474,13 +540,13 @@ void TestMediaInfo::video_bitrate_preScanWorksRegardlessOfTrackOrder()
          "OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"}
     ]}})";
     const Rows rows = parseMediaInfo(json);
-    // Codec row still gets bitrate. General row order follows track order,
-    // so it comes second here, but that's expected behaviour — rows appear
-    // in the order their driving track appears in the JSON.
+    // Codec row still gets bitrate. Format-name row order follows track
+    // order, so it comes last here, but that's expected behaviour — rows
+    // appear in the order their driving track appears in the JSON.
     QCOMPARE(rows.size(), 3);
-    QCOMPARE(rows[0], Row(QStringLiteral("AVC "),    QStringLiteral("24fps @ VBR 5Mbps")));
-    QCOMPARE(rows[1], Row(QStringLiteral("Size "),   QStringLiteral("1920x1080 (1.78)")));
-    QCOMPARE(rows[2], Row(QStringLiteral("Format "), QStringLiteral("Matroska (500B)")));
+    QCOMPARE(rows[0], Row(QStringLiteral("AVC "),      QStringLiteral("24fps @ VBR 5Mbps")));
+    QCOMPARE(rows[1], Row(QStringLiteral("Size "),     QStringLiteral("1920x1080 (1.78)")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Matroska "), QStringLiteral("500B")));
 }
 
 // ----------------------------------------------------------------------
@@ -810,8 +876,10 @@ void TestMediaInfo::realistic_fixture()
     // H.264 clip in an MP4 container, 23.976 fps 1080p at 5 Mbps VBR, with
     // English FLAC audio (5.1 channels), English SDH subtitles, and a
     // File_Modified_Date_Local of 2010 Dec 11. Duration is 1h23m45s (5025 s).
-    // The Video row now splits into a codec row (fps + bitrate) and a
-    // separate Size row (WxH + aspect).
+    // Duration is emitted first. The container format row uses the format
+    // name itself as its label ("MPEG-4 ") with "<size> (<date>)" as the
+    // value. The Video row is split into a codec row (fps + bitrate) and
+    // a Size row (WxH + aspect).
     const QByteArray json = R"({"media":{"track":[
         {"@type":"General","Format":"MPEG-4","FileSize":"1572864","File_Modified_Date_Local":"2010-12-11 23:46:17","Duration":"5025.000","OverallBitRate_Mode":"VBR","OverallBitRate":"5000000"},
         {"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","FrameRate":"23.976"},
@@ -820,15 +888,14 @@ void TestMediaInfo::realistic_fixture()
     ]}})";
 
     const Rows rows = parseMediaInfo(json);
-    QCOMPARE(rows.size(), 7);
+    QCOMPARE(rows.size(), 6);
 
-    QCOMPARE(rows[0], Row(QStringLiteral("Format "),    QStringLiteral("MPEG-4 (1.5MiB)")));
-    QCOMPARE(rows[1], Row(QStringLiteral("Date "),      QStringLiteral("2010 Dec 11")));
-    QCOMPARE(rows[2], Row(QStringLiteral("Duration "),  QStringLiteral("1h23m45s")));
-    QCOMPARE(rows[3], Row(QStringLiteral("AVC "),       QStringLiteral("23.976fps @ VBR 5Mbps")));
-    QCOMPARE(rows[4], Row(QStringLiteral("Size "),      QStringLiteral("1920x1080 (1.78)")));
-    QCOMPARE(rows[5], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
-    QCOMPARE(rows[6], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
+    QCOMPARE(rows[0], Row(QStringLiteral("Duration "), QStringLiteral("1h23m45s")));
+    QCOMPARE(rows[1], Row(QStringLiteral("MPEG-4 "),   QStringLiteral("1.5MiB (2010 Dec 11)")));
+    QCOMPARE(rows[2], Row(QStringLiteral("AVC "),      QStringLiteral("23.976fps @ VBR 5Mbps")));
+    QCOMPARE(rows[3], Row(QStringLiteral("Size "),     QStringLiteral("1920x1080 (1.78)")));
+    QCOMPARE(rows[4], Row(QStringLiteral("FLAC (English) "), QStringLiteral("Front: L C R, Side: L R, LFE")));
+    QCOMPARE(rows[5], Row(QStringLiteral("Subtitles "), QStringLiteral("English (SDH)")));
 }
 
 QTEST_APPLESS_MAIN(TestMediaInfo)
