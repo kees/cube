@@ -30,22 +30,30 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             size_t divider = 1;
             QString si = "B";
 
-            if (size > 1024 * divider) {
+            // `>=` (not `>`) at each boundary so exactly 1024 B is 1 KiB,
+            // exactly 1 MiB is 1 MiB, etc. — the `>` form used to render
+            // 1024 B as "1024B" and 1 MiB as "1024KiB".
+            if (size >= 1024 * divider) {
                 si = "KiB";
                 divider *= 1024;
             }
-            if (size > 1024 * divider) {
+            if (size >= 1024 * divider) {
                 si = "MiB";
                 divider *= 1024;
             }
-            if (size > 1024 * divider) {
+            if (size >= 1024 * divider) {
                 si = "GiB";
                 divider *= 1024;
             }
             size_t whole = size;
             size_t tenths = 0;
             if (divider > 10) {
-                whole = size / (divider / 10);
+                // Multiply before dividing so we don't lose precision from
+                // `divider / 10` truncating (e.g. 1024/10 = 102 instead of
+                // 102.4, which skews near-boundary sizes by ~0.4%). Safe
+                // from overflow: even a 1 PB file (2^50 B) times 10 fits
+                // comfortably in size_t on any 64-bit platform.
+                whole = size * 10 / divider;
                 tenths = whole % 10;
                 whole /= 10;
             }

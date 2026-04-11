@@ -86,22 +86,38 @@ void TestMediaInfo::formatSize_data()
     QTest::addColumn<QString>("expectedFormat");
 
     // Sub-KiB: raw byte count, no decimal (divider=1, divider>10 is false).
-    QTest::newRow("500 bytes")      << QByteArray("500")      << QString("MPEG-4 (500B)");
-    // Edge: 1024 is NOT greater than 1024, so still bytes.
-    QTest::newRow("1024 bytes")     << QByteArray("1024")     << QString("MPEG-4 (1024B)");
-    // Just above 1024 promotes to KiB.
-    QTest::newRow("1025 -> 1KiB")   << QByteArray("1025")     << QString("MPEG-4 (1KiB)");
+    QTest::newRow("500 bytes")        << QByteArray("500")      << QString("MPEG-4 (500B)");
+    // One byte below the KiB boundary — last value that's still shown as bytes.
+    QTest::newRow("1023 bytes")       << QByteArray("1023")     << QString("MPEG-4 (1023B)");
+    // Exact KiB boundary: `>=` means 1024 B is already 1 KiB.
+    QTest::newRow("1024 -> 1KiB")     << QByteArray("1024")     << QString("MPEG-4 (1KiB)");
+    // Just above the boundary.
+    QTest::newRow("1025 -> 1KiB")     << QByteArray("1025")     << QString("MPEG-4 (1KiB)");
     // Whole-KiB value with no decimal emitted (tenths == 0).
-    QTest::newRow("2048 -> 2KiB")   << QByteArray("2048")     << QString("MPEG-4 (2KiB)");
+    QTest::newRow("2048 -> 2KiB")     << QByteArray("2048")     << QString("MPEG-4 (2KiB)");
     // 2.5 KiB: 2560 / 102 = 25, tenths = 5, whole = 2 => "2.5KiB".
-    QTest::newRow("2560 -> 2.5KiB") << QByteArray("2560")     << QString("MPEG-4 (2.5KiB)");
-    // MiB boundary.
-    QTest::newRow("1048577 -> 1MiB")  << QByteArray("1048577") << QString("MPEG-4 (1MiB)");
+    QTest::newRow("2560 -> 2.5KiB")   << QByteArray("2560")     << QString("MPEG-4 (2.5KiB)");
+    // One byte below the MiB boundary — regression test for the decimal
+    // arithmetic: should be 1023.9 KiB, not 1028 KiB (which is what the
+    // old `size / (divider / 10)` form used to compute).
+    QTest::newRow("1048575 -> 1023.9KiB")
+        << QByteArray("1048575") << QString("MPEG-4 (1023.9KiB)");
+    // Exact MiB boundary — regression test for `>=` semantics.
+    QTest::newRow("1048576 -> 1MiB")  << QByteArray("1048576")  << QString("MPEG-4 (1MiB)");
+    // Just above the MiB boundary.
+    QTest::newRow("1048577 -> 1MiB")  << QByteArray("1048577")  << QString("MPEG-4 (1MiB)");
     // 1.5 MiB.
     QTest::newRow("1572864 -> 1.5MiB") << QByteArray("1572864") << QString("MPEG-4 (1.5MiB)");
-    // Just-above-1-GiB boundary — regression test for the `toFloat` parsing
-    // bug that used to silently lose precision at values above ~16 MiB and
-    // mis-format this as "1024MiB". `toLongLong()` handles it exactly.
+    // One byte below the GiB boundary — companion to the 1048575 case.
+    // Should format as 1023.9 MiB, not 1024 MiB.
+    QTest::newRow("1073741823 -> 1023.9MiB")
+        << QByteArray("1073741823") << QString("MPEG-4 (1023.9MiB)");
+    // Exact GiB boundary — regression test for `>=` semantics.
+    QTest::newRow("1073741824 -> 1GiB")
+        << QByteArray("1073741824") << QString("MPEG-4 (1GiB)");
+    // Just-above-1-GiB boundary — also a regression test for the `toFloat`
+    // parsing bug that used to silently lose precision at values above
+    // ~16 MiB and mis-format this as "1024MiB". `toLongLong()` handles it.
     QTest::newRow("1073741825 -> 1GiB")
         << QByteArray("1073741825") << QString("MPEG-4 (1GiB)");
     // 2.5 GiB: exercises the GiB branch plus the tenths-decimal code path.
