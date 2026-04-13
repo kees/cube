@@ -9,6 +9,33 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+QList<QPair<QString, QString>> parseRatings(const QByteArray &json)
+{
+    QList<QPair<QString, QString>> rows;
+
+    QJsonDocument doc = QJsonDocument::fromJson(json);
+    if (!doc.isObject())
+        return rows;
+    QJsonObject obj = doc.object();
+
+    // Display order: RT → IMDb → Metacritic → (future) Letterboxd.
+    // Only add a row when the value is a non-empty string.
+    if (obj["rt"].isString() && !obj["rt"].toString().isEmpty())
+        rows.append({QStringLiteral("RT "), obj["rt"].toString()});
+
+    if (obj["imdb"].isString() && !obj["imdb"].toString().isEmpty())
+        rows.append({QStringLiteral("IMDb "), obj["imdb"].toString()});
+
+    if (obj["metacritic"].isString() && !obj["metacritic"].toString().isEmpty())
+        rows.append({QStringLiteral("Metacritic "), obj["metacritic"].toString()});
+
+    // Future: Letterboxd
+    if (obj["letterboxd"].isString() && !obj["letterboxd"].toString().isEmpty())
+        rows.append({QStringLiteral("Letterboxd "), obj["letterboxd"].toString()});
+
+    return rows;
+}
+
 QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 {
     QList<QPair<QString, QString>> rows;

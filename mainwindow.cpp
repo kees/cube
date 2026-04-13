@@ -45,10 +45,16 @@ MainWindow::MainWindow(QWidget *parent) :
     qDebug() << "thumbnailer program:" << program_thumbnailer
              << "resolved to:" << (thumbnailerPath.isEmpty() ? QString("<not found on PATH>") : thumbnailerPath);
 
+    // OMDb API key for ratings lookups on /Movies/ files. Empty means
+    // "not configured"; the thumbnailer skips the fetch in that case.
+    // Future: letterboxd_apikey, letterboxd_apisecret.
+    QString omdb_apikey = settings.value("omdb_apikey", "").toString();
+
     // Save our settings so they can be discovered later
     settings.setValue("toplevel", toplevel);
     settings.setValue("player", program_player);
     settings.setValue("thumbnailer", program_thumbnailer);
+    settings.setValue("omdb_apikey", omdb_apikey);
 
     ui->setupUi(this);
 
@@ -544,6 +550,23 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
     scene->addPixmap(QPixmap::fromImage(image));
     ui->grThumbnail->fitInView(image.rect(), Qt::KeepAspectRatio);
     ui->grThumbnail->centerOn(scene->items()[0]);
+
+    /* Ratings sidecar (optional — only exists for /Movies/ files whose
+     * name matched "Title (Year)" and had a configured OMDb API key).
+     * Ratings rows go above the media-info rows so they're the first
+     * thing visible in the metadata table. Parsing lives in mediainfo.cpp
+     * (parseRatings) so it can be unit-tested without Qt Widgets. */
+    QFile ratings_file(thumbnail + ".ratings");
+    if (ratings_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QList<QPair<QString, QString>> ratingRows = parseRatings(ratings_file.readAll());
+        ratings_file.close();
+        for (const auto &entry : ratingRows) {
+            QList<QStandardItem *> row;
+            row.append(new QStandardItem(entry.first));
+            row.append(new QStandardItem(entry.second));
+            metadata->appendRow(row);
+        }
+    }
 
     /* Media info JSON — parsing lives in mediainfo.cpp so it can be
      * unit-tested without dragging in Qt Widgets. */

@@ -21,4 +21,11 @@
 // General/Format+size, Duration, Video, per-track Audio, Subtitles.
 QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json);
 
+// Parses a `.ratings` sidecar (JSON with keys "rt", "imdb", "metacritic",
+// "letterboxd") and returns (label, value) rows for display above the
+// media-info rows. Empty/missing fields are silently skipped. Returns an
+// empty list when the input is absent or unparseable, so callers can
+// unconditionally prepend the result without a "has ratings" check.
+QList<QPair<QString, QString>> parseRatings(const QByteArray &json);
+
 #endif // MEDIAINFO_H

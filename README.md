@@ -7,6 +7,20 @@ configuration
 -------------
 - ~/.config/Outflux/playback-walker.conf
 
+ratings (optional)
+------------------
+For files under a `/Movies/` directory whose name (or parent directory)
+matches the pattern `Title Name (YYYY)`, the thumbnailer can fetch
+ratings from OMDb (Rotten Tomatoes, IMDb, Metacritic). To enable:
+
+1. Get a free OMDb API key at https://www.omdbapi.com/apikey.aspx
+2. Add the key to `~/.config/Outflux/playback-walker.conf`:
+   `omdb_apikey=your_key_here`
+
+Ratings are cached in `~/.cache/playback/thumbnails/` as `.ratings`
+sidecars alongside the existing `.png` and `.json` files, and are
+regenerated when the media file or the thumbnailer script changes.
+
 cache
 -----
 - ~/.cache/playback/
@@ -16,6 +30,7 @@ dependencies
 Run
 - apt install mpv mediainfo imagemagick
 - apt install qt6-qpa-plugins libqt6widgets6 libqt6concurrent6 libqt6gui6
+- apt install curl jq  (optional, for movie ratings lookups)
 
 Build
 - apt install qtcreator qt6-base-dev qt6-base-dev-tools qmake6

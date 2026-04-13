@@ -95,6 +95,14 @@ private slots:
     void subtitles_unspecifiedLanguage();
     void subtitles_unspecifiedWithTitle();
 
+    // --- Ratings sidecar (parseRatings) ---
+    void ratings_allPresent();
+    void ratings_partialFields();
+    void ratings_emptyValues();
+    void ratings_emptyJson();
+    void ratings_malformedJson();
+    void ratings_futureLetterboxd();
+
     // --- Degenerate input ---
     void empty_json();
     void malformed_json();
@@ -870,6 +878,80 @@ void TestMediaInfo::subtitles_unspecifiedWithTitle()
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].second, QStringLiteral("unspecified (Commentary)"));
+}
+
+// ----------------------------------------------------------------------
+// Ratings sidecar: parseRatings(). Rows are ordered RT → IMDb →
+// Metacritic → Letterboxd, only present when the value is non-empty.
+// ----------------------------------------------------------------------
+
+void TestMediaInfo::ratings_allPresent()
+{
+    const QByteArray json = R"({
+        "title":"The Matrix","year":"1999",
+        "rt":"88%","imdb":"8.7/10","metacritic":"73/100","letterboxd":""
+    })";
+    const Rows rows = parseRatings(json);
+    QCOMPARE(rows.size(), 3);
+    QCOMPARE(rows[0], Row(QStringLiteral("RT "),         QStringLiteral("88%")));
+    QCOMPARE(rows[1], Row(QStringLiteral("IMDb "),       QStringLiteral("8.7/10")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Metacritic "), QStringLiteral("73/100")));
+}
+
+void TestMediaInfo::ratings_partialFields()
+{
+    // Only RT present — the other rows are simply absent, not empty or "N/A".
+    const QByteArray json = R"({
+        "title":"Niche Film","year":"2020",
+        "rt":"95%","imdb":"","metacritic":"","letterboxd":""
+    })";
+    const Rows rows = parseRatings(json);
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0], Row(QStringLiteral("RT "), QStringLiteral("95%")));
+}
+
+void TestMediaInfo::ratings_emptyValues()
+{
+    // All ratings are empty strings — no rows emitted at all. This
+    // matches the thumbnailer's behaviour of not writing the .ratings
+    // file when all lookups returned nothing, but covers the edge case
+    // where the file was written with blanks.
+    const QByteArray json = R"({
+        "title":"Unknown","year":"2000",
+        "rt":"","imdb":"","metacritic":"","letterboxd":""
+    })";
+    QCOMPARE(parseRatings(json), Rows());
+}
+
+void TestMediaInfo::ratings_emptyJson()
+{
+    // Empty/absent input — same no-rows result, no crash.
+    QCOMPARE(parseRatings(QByteArray()), Rows());
+    QCOMPARE(parseRatings(QByteArray("")), Rows());
+    QCOMPARE(parseRatings(QByteArray("{}")), Rows());
+}
+
+void TestMediaInfo::ratings_malformedJson()
+{
+    QCOMPARE(parseRatings(QByteArray("not json")), Rows());
+    QCOMPARE(parseRatings(QByteArray("{broken")), Rows());
+}
+
+void TestMediaInfo::ratings_futureLetterboxd()
+{
+    // When the Letterboxd field is populated, it should appear as a fourth
+    // row after Metacritic. Pins the display slot now so the Letterboxd
+    // integration can be tested before the thumbnailer produces the value.
+    const QByteArray json = R"({
+        "title":"The Matrix","year":"1999",
+        "rt":"88%","imdb":"8.7/10","metacritic":"73/100","letterboxd":"4.2/5"
+    })";
+    const Rows rows = parseRatings(json);
+    QCOMPARE(rows.size(), 4);
+    QCOMPARE(rows[0], Row(QStringLiteral("RT "),         QStringLiteral("88%")));
+    QCOMPARE(rows[1], Row(QStringLiteral("IMDb "),       QStringLiteral("8.7/10")));
+    QCOMPARE(rows[2], Row(QStringLiteral("Metacritic "), QStringLiteral("73/100")));
+    QCOMPARE(rows[3], Row(QStringLiteral("Letterboxd "), QStringLiteral("4.2/5")));
 }
 
 // ----------------------------------------------------------------------

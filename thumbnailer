@@ -19,6 +19,7 @@ mkdir -p "$CACHE"/$INDEX
 NEW="$CACHE"/$INDEX/$HASH.new.$EXT
 THUMB="$CACHE"/$INDEX/$HASH.$EXT
 JSON="$THUMB.json"
+RATINGS="$THUMB.ratings"
 BASE_EXT=$(echo "$MEDIA" | awk -F. '{print $NF}')
 if [ "$BASE_EXT" == "$MEDIA" ]; then
 	# No extension, just give up.
@@ -84,6 +85,89 @@ do_json()
 	rm -f "$LINK"
 }
 
+do_ratings()
+{
+	local media="$1"
+
+	# Only look up ratings for files under a /Movies/ directory.
+	echo "$media" | grep -q '/Movies/' || return 0
+
+	# Require curl + jq; skip silently if missing.
+	command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+
+	# Extract title and year from a "Title Name (YYYY)" pattern. Try the
+	# filename (sans extension) first, then the parent directory name.
+	local name_noext
+	name_noext=$(basename "$media")
+	name_noext="${name_noext%.*}"
+
+	local title="" year=""
+	if [[ "$name_noext" =~ ^(.+)\ \(([0-9]{4})\)$ ]]; then
+		title="${BASH_REMATCH[1]}"
+		year="${BASH_REMATCH[2]}"
+	else
+		local dirname
+		dirname=$(basename "$(dirname "$media")")
+		if [[ "$dirname" =~ ^(.+)\ \(([0-9]{4})\)$ ]]; then
+			title="${BASH_REMATCH[1]}"
+			year="${BASH_REMATCH[2]}"
+		else
+			echo "$media: no 'Title (Year)' pattern found, skipping ratings" >> "$LOG"
+			return 0
+		fi
+	fi
+
+	echo "$media: looking up ratings for '$title' ($year)" >> "$LOG"
+
+	# --- OMDb (Rotten Tomatoes + IMDb + Metacritic) ---
+	local OMDB_KEY
+	OMDB_KEY=$(grep ^omdb_apikey= ~/.config/Outflux/playback-walker.conf 2>/dev/null | cut -d= -f2-)
+
+	local rt="" imdb="" metacritic=""
+	if [ -n "$OMDB_KEY" ]; then
+		local omdb_response
+		omdb_response=$(curl -s -G "https://www.omdbapi.com/" \
+			--data-urlencode "t=$title" \
+			--data-urlencode "y=$year" \
+			--data-urlencode "apikey=$OMDB_KEY")
+
+		local response_ok
+		response_ok=$(echo "$omdb_response" | jq -r '.Response // "False"')
+		if [ "$response_ok" = "True" ]; then
+			rt=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Rotten Tomatoes") | .Value // empty')
+			imdb=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Internet Movie Database") | .Value // empty')
+			metacritic=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Metacritic") | .Value // empty')
+			echo "$media: OMDb: RT=$rt IMDb=$imdb Metacritic=$metacritic" >> "$LOG"
+		else
+			echo "$media: OMDb lookup failed: $(echo "$omdb_response" | jq -r '.Error // "unknown"')" >> "$LOG"
+		fi
+	else
+		echo "$media: no omdb_apikey configured, skipping OMDb" >> "$LOG"
+	fi
+
+	# --- Future: Letterboxd ---
+	local letterboxd=""
+	# Letterboxd integration will go here. The .ratings JSON already
+	# includes a placeholder "letterboxd" field so adding it later won't
+	# change the sidecar format or require cache invalidation.
+
+	# Only write the .ratings file if we got at least one rating.
+	if [ -n "$rt" ] || [ -n "$imdb" ] || [ -n "$metacritic" ] || [ -n "$letterboxd" ]; then
+		jq -n \
+			--arg title "$title" \
+			--arg year "$year" \
+			--arg rt "$rt" \
+			--arg imdb "$imdb" \
+			--arg metacritic "$metacritic" \
+			--arg letterboxd "$letterboxd" \
+			'{title: $title, year: $year, rt: $rt, imdb: $imdb, metacritic: $metacritic, letterboxd: $letterboxd}' \
+			> "$NEW".ratings
+		mv "$NEW".ratings "$RATINGS"
+	else
+		echo "$media: no ratings retrieved, skipping .ratings file" >> "$LOG"
+	fi
+}
+
 if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ] || [ "$SELF" -nt "$THUMB" ]; then
 	do_thumbnail "$MEDIA"
 else
@@ -94,6 +178,12 @@ if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ] || [ "$SELF" -nt "$JSON" ]; then
 	do_json "$MEDIA"
 else
 	echo "$MEDIA: using json $JSON" >> "$LOG"
+fi
+
+if [ ! -e "$RATINGS" ] || [ "$MEDIA" -nt "$RATINGS" ] || [ "$SELF" -nt "$RATINGS" ]; then
+	do_ratings "$MEDIA"
+else
+	echo "$MEDIA: using ratings $RATINGS" >> "$LOG"
 fi
 
 echo "$THUMB"
