@@ -114,6 +114,46 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->grThumbnail->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     ui->grThumbnail->setBackgroundBrush(QBrush(Qt::black, Qt::SolidPattern));
 
+    // Fetch missing rating-service logos asynchronously. Uses Google's
+    // public favicon service to grab 32x32 PNGs — runs only when at
+    // least one icon file is absent under ~/.config/Outflux/icons/, so
+    // it's a no-op on every startup after the first successful fetch.
+    // Failures (no curl, no network) are silent; the colored-square
+    // fallbacks in ratingIcon() cover the gap until the next attempt.
+    {
+        const QString iconDir = QDir::homePath() + "/.config/Outflux/icons/";
+        bool anyMissing = false;
+        for (const char *key : {"rt", "imdb", "metacritic", "letterboxd"}) {
+            if (!QFile::exists(iconDir + QString::fromLatin1(key) + ".png")) {
+                anyMissing = true;
+                break;
+            }
+        }
+        if (anyMissing) {
+            QProcess *fetcher = new QProcess(this);
+            fetcher->start("bash", QStringList{"-c", QString(
+                "mkdir -p '%1'; "
+                "for pair in "
+                "'rt rottentomatoes.com' "
+                "'imdb imdb.com' "
+                "'metacritic metacritic.com' "
+                "'letterboxd letterboxd.com'; do "
+                "  key=${pair%% *}; "
+                "  domain=${pair#* }; "
+                "  dest='%1'$key.png; "
+                "  if [ ! -e \"$dest\" ]; then "
+                "    curl -s -L --fail -o \"$dest\" "
+                "      \"https://www.google.com/s2/favicons?domain=$domain&sz=32\" "
+                "      || rm -f \"$dest\"; "
+                "  fi; "
+                "done"
+            ).arg(iconDir)});
+            connect(fetcher,
+                    static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                    fetcher, &QProcess::deleteLater);
+        }
+    }
+
     showMaximized();
     showFullScreen();
     ui->lstFiles->setFocus();
@@ -563,13 +603,14 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
      * the file isn't there, falls back to a brand-coloured square so the
      * table always has *something* in the icon column. To upgrade from
      * placeholders to real logos, just drop the PNGs there — no rebuild. */
+    static const QString iconDir = QDir::homePath() + "/.config/Outflux/icons/";
+
     static auto ratingIcon = [](const QString &key) -> QIcon {
         static QHash<QString, QIcon> cache;
         if (cache.contains(key))
             return cache[key];
 
-        const QString path = QDir::homePath()
-            + "/.config/Outflux/icons/" + key + ".png";
+        const QString path = iconDir + key + ".png";
         if (QFile::exists(path)) {
             QIcon icon(path);
             cache[key] = icon;
