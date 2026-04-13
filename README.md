@@ -21,6 +21,17 @@ Ratings are cached in `~/.cache/playback/thumbnails/` as `.ratings`
 sidecars alongside the existing `.png` and `.json` files, and are
 regenerated when the media file or the thumbnailer script changes.
 
+Each rating row in the metadata table shows a small service-logo icon.
+Out of the box these are brand-coloured placeholder squares (red for RT,
+yellow for IMDb, green for Metacritic, orange for Letterboxd). To use
+real logos, drop 32x32 PNG files into `~/.config/Outflux/icons/`:
+- `rt.png` — Rotten Tomatoes
+- `imdb.png` — IMDb
+- `metacritic.png` — Metacritic
+- `letterboxd.png` — Letterboxd (for future use)
+
+No rebuild needed; the icons are loaded at runtime on first display.
+
 cache
 -----
 - ~/.cache/playback/

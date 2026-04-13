@@ -555,14 +555,60 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
      * name matched "Title (Year)" and had a configured OMDb API key).
      * Ratings rows go above the media-info rows so they're the first
      * thing visible in the metadata table. Parsing lives in mediainfo.cpp
-     * (parseRatings) so it can be unit-tested without Qt Widgets. */
+     * (parseRatings) so it can be unit-tested without Qt Widgets.
+     *
+     * Each rating row gets a small service-logo icon via ratingIcon():
+     * looks for a user-provided PNG at ~/.config/Outflux/icons/<key>.png
+     * (e.g. rt.png, imdb.png, metacritic.png, letterboxd.png), and if
+     * the file isn't there, falls back to a brand-coloured square so the
+     * table always has *something* in the icon column. To upgrade from
+     * placeholders to real logos, just drop the PNGs there — no rebuild. */
+    static auto ratingIcon = [](const QString &key) -> QIcon {
+        static QHash<QString, QIcon> cache;
+        if (cache.contains(key))
+            return cache[key];
+
+        const QString path = QDir::homePath()
+            + "/.config/Outflux/icons/" + key + ".png";
+        if (QFile::exists(path)) {
+            QIcon icon(path);
+            cache[key] = icon;
+            return icon;
+        }
+
+        // Brand-coloured placeholder: a solid square in the service's
+        // primary colour, so the rating rows are visually distinct even
+        // without real logos installed.
+        QPixmap pm(32, 32);
+        if      (key == "rt")         pm.fill(QColor("#FA320A"));
+        else if (key == "imdb")       pm.fill(QColor("#F5C518"));
+        else if (key == "metacritic") pm.fill(QColor("#66CC33"));
+        else if (key == "letterboxd") pm.fill(QColor("#FF8000"));
+        else                          pm.fill(Qt::gray);
+        QIcon icon(pm);
+        cache[key] = icon;
+        return icon;
+    };
+
+    // Map label text → icon key for the services we know about.
+    static const QHash<QString, QString> iconKeys = {
+        {QStringLiteral("RT "),         QStringLiteral("rt")},
+        {QStringLiteral("IMDb "),       QStringLiteral("imdb")},
+        {QStringLiteral("Metacritic "), QStringLiteral("metacritic")},
+        {QStringLiteral("Letterboxd "), QStringLiteral("letterboxd")},
+    };
+
     QFile ratings_file(thumbnail + ".ratings");
     if (ratings_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         const QList<QPair<QString, QString>> ratingRows = parseRatings(ratings_file.readAll());
         ratings_file.close();
         for (const auto &entry : ratingRows) {
             QList<QStandardItem *> row;
-            row.append(new QStandardItem(entry.first));
+            QStandardItem *label = new QStandardItem(entry.first);
+            auto it = iconKeys.constFind(entry.first);
+            if (it != iconKeys.constEnd())
+                label->setIcon(ratingIcon(*it));
+            row.append(label);
             row.append(new QStandardItem(entry.second));
             metadata->appendRow(row);
         }
