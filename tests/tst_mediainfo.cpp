@@ -1049,13 +1049,25 @@ void TestMediaInfo::ratings_letterboxdStar()
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].second, QStringLiteral("4.2\u2605"));
 
-    // Whole number: "4/5" → "4★"
+    // Whole number: "4/5" → "4★" (no trailing .0)
     rows = parse("4/5");
     QCOMPARE(rows[0].second, QStringLiteral("4\u2605"));
 
-    // High precision: "3.83/5" → "3.83★"
+    // Whole after rounding: "4.0/5" → "4★"
+    rows = parse("4.0/5");
+    QCOMPARE(rows[0].second, QStringLiteral("4\u2605"));
+
+    // High precision rounded down: "3.83/5" → "3.8★"
     rows = parse("3.83/5");
-    QCOMPARE(rows[0].second, QStringLiteral("3.83\u2605"));
+    QCOMPARE(rows[0].second, QStringLiteral("3.8\u2605"));
+
+    // Rounding up: "3.87/5" → "3.9★"
+    rows = parse("3.87/5");
+    QCOMPARE(rows[0].second, QStringLiteral("3.9\u2605"));
+
+    // Rounds to whole: "3.96/5" → "4★"
+    rows = parse("3.96/5");
+    QCOMPARE(rows[0].second, QStringLiteral("4\u2605"));
 
     // No "/5" suffix (unexpected format) — pass through unchanged.
     rows = parse("3.8");

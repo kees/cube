@@ -609,6 +609,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     qDebug() << "thumbnail size chosen: " << width << "x" << (int)(width * ratio);
     ui->grThumbnail->setMinimumSize(width, width / ratio);
     ui->tblMetadata->setMaximumWidth(width);
+    ratingsBar->setMaximumWidth(width);
 
     // Figure out metadata font size
     int size = ui->lstFiles->font().pointSize();

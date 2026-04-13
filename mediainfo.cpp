@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QtMath>
 
 QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
                                             const QStringList &serviceKeys)
@@ -38,9 +39,20 @@ QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
             if (key == QLatin1String("metacritic") && value.endsWith(QLatin1String("/100"))) {
                 value = value.chopped(4) + QStringLiteral("%");
             }
-            // Letterboxd: "2.77/5" → "2.77★" (star instead of /5 suffix).
+            // Letterboxd: "2.77/5" → "2.8★" (max 1 decimal, star suffix).
             if (key == QLatin1String("letterboxd") && value.endsWith(QLatin1String("/5"))) {
-                value = value.chopped(2) + QStringLiteral("\u2605");
+                bool ok;
+                double num = value.chopped(2).toDouble(&ok);
+                if (ok) {
+                    double rounded = qRound(num * 10) / 10.0;
+                    if (rounded == qFloor(rounded))
+                        value = QString::number(static_cast<int>(rounded));
+                    else
+                        value = QString::number(rounded, 'f', 1);
+                } else {
+                    value = value.chopped(2);
+                }
+                value += QStringLiteral("\u2605");
             }
 
             rows.append({key, value});
