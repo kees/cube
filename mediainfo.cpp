@@ -24,8 +24,27 @@ QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
     // Each key is both the JSON field name in the .ratings sidecar and
     // the lookup key for MainWindow::ratingServices (icon/colour/label).
     for (const auto &key : serviceKeys) {
-        if (obj[key].isString() && !obj[key].toString().isEmpty())
-            rows.append({key, obj[key].toString()});
+        if (obj[key].isString() && !obj[key].toString().isEmpty()) {
+            QString value = obj[key].toString();
+
+            // IMDb: "6.8/10" → "68%" (whole-number percentage).
+            if (key == QLatin1String("imdb") && value.endsWith(QLatin1String("/10"))) {
+                bool ok;
+                double num = value.chopped(3).toDouble(&ok);
+                if (ok)
+                    value = QString::number(qRound(num * 10)) + QStringLiteral("%");
+            }
+            // Metacritic: "73/100" → "73%"
+            if (key == QLatin1String("metacritic") && value.endsWith(QLatin1String("/100"))) {
+                value = value.chopped(4) + QStringLiteral("%");
+            }
+            // Letterboxd: "2.77/5" → "2.77★" (star instead of /5 suffix).
+            if (key == QLatin1String("letterboxd") && value.endsWith(QLatin1String("/5"))) {
+                value = value.chopped(2) + QStringLiteral("\u2605");
+            }
+
+            rows.append({key, value});
+        }
     }
 
     return rows;

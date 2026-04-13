@@ -105,6 +105,8 @@ private slots:
     void ratings_customOrder();
     void ratings_filterSources();
     void ratings_emptyOrder();
+    void ratings_imdbConversion();
+    void ratings_letterboxdStar();
 
     // --- Degenerate input ---
     void empty_json();
@@ -898,10 +900,11 @@ void TestMediaInfo::ratings_allPresent()
     })";
     const Rows rows = parseRatings(json, order);
     // Letterboxd is empty → skipped, so only 3 rows.
+    // IMDb "8.7/10" is converted to "87%" (whole-number percentage).
     QCOMPARE(rows.size(), 3);
     QCOMPARE(rows[0], Row(QStringLiteral("rt"),         QStringLiteral("88%")));
-    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("8.7/10")));
-    QCOMPARE(rows[2], Row(QStringLiteral("metacritic"), QStringLiteral("73/100")));
+    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("87%")));
+    QCOMPARE(rows[2], Row(QStringLiteral("metacritic"), QStringLiteral("73%")));
 }
 
 void TestMediaInfo::ratings_partialFields()
@@ -950,9 +953,8 @@ void TestMediaInfo::ratings_malformedJson()
 void TestMediaInfo::ratings_futureLetterboxd()
 {
     // Default order puts Letterboxd before Metacritic. When both are
-    // populated, they appear in that order. Pins the display slot so the
-    // Letterboxd integration can be tested before the thumbnailer
-    // produces the value.
+    // populated, they appear in that order. IMDb is converted to a
+    // percentage ("87%"), Letterboxd gets a star suffix ("4.2★").
     const QStringList order = {"rt", "imdb", "letterboxd", "metacritic"};
     const QByteArray json = R"({
         "title":"The Matrix","year":"1999",
@@ -961,9 +963,9 @@ void TestMediaInfo::ratings_futureLetterboxd()
     const Rows rows = parseRatings(json, order);
     QCOMPARE(rows.size(), 4);
     QCOMPARE(rows[0], Row(QStringLiteral("rt"),         QStringLiteral("88%")));
-    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("8.7/10")));
-    QCOMPARE(rows[2], Row(QStringLiteral("letterboxd"), QStringLiteral("4.2/5")));
-    QCOMPARE(rows[3], Row(QStringLiteral("metacritic"), QStringLiteral("73/100")));
+    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("87%")));
+    QCOMPARE(rows[2], Row(QStringLiteral("letterboxd"), QStringLiteral("4.2\u2605")));
+    QCOMPARE(rows[3], Row(QStringLiteral("metacritic"), QStringLiteral("73%")));
 }
 
 void TestMediaInfo::ratings_customOrder()
@@ -971,6 +973,7 @@ void TestMediaInfo::ratings_customOrder()
     // The serviceKeys list controls display order. Metacritic first, then
     // IMDb, then RT — reversed from the default. Letterboxd not in the
     // list at all, so even though it has a value it's excluded.
+    // IMDb "7.5/10" → "75%".
     const QStringList order = {"metacritic", "imdb", "rt"};
     const QByteArray json = R"({
         "title":"Test","year":"2020",
@@ -978,8 +981,8 @@ void TestMediaInfo::ratings_customOrder()
     })";
     const Rows rows = parseRatings(json, order);
     QCOMPARE(rows.size(), 3);
-    QCOMPARE(rows[0], Row(QStringLiteral("metacritic"), QStringLiteral("80/100")));
-    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("7.5/10")));
+    QCOMPARE(rows[0], Row(QStringLiteral("metacritic"), QStringLiteral("80%")));
+    QCOMPARE(rows[1], Row(QStringLiteral("imdb"),       QStringLiteral("75%")));
     QCOMPARE(rows[2], Row(QStringLiteral("rt"),         QStringLiteral("90%")));
 }
 
@@ -1006,6 +1009,57 @@ void TestMediaInfo::ratings_emptyOrder()
         "rt":"90%","imdb":"7.5/10","metacritic":"80/100"
     })";
     QCOMPARE(parseRatings(json, QStringList()), Rows());
+}
+
+void TestMediaInfo::ratings_imdbConversion()
+{
+    const QStringList order = {"imdb"};
+
+    // Standard: "6.8/10" → "68%"
+    auto parse = [&](const char *val) {
+        return parseRatings(QByteArray(R"({"imdb":")") + val + "\"}", order);
+    };
+    Rows rows = parse("6.8/10");
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("68%"));
+
+    // Perfect score: "10/10" → "100%"
+    rows = parse("10/10");
+    QCOMPARE(rows[0].second, QStringLiteral("100%"));
+
+    // Low score with rounding: "6.85/10" → "69%" (qRound(68.5) = 69)
+    rows = parse("6.85/10");
+    QCOMPARE(rows[0].second, QStringLiteral("69%"));
+
+    // No "/10" suffix (unexpected format) — pass through unchanged.
+    rows = parse("8.7");
+    QCOMPARE(rows[0].second, QStringLiteral("8.7"));
+}
+
+void TestMediaInfo::ratings_letterboxdStar()
+{
+    const QStringList order = {"letterboxd"};
+
+    auto parse = [&](const char *val) {
+        return parseRatings(QByteArray(R"({"letterboxd":")") + val + "\"}", order);
+    };
+
+    // Standard: "4.2/5" → "4.2★"
+    Rows rows = parse("4.2/5");
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows[0].second, QStringLiteral("4.2\u2605"));
+
+    // Whole number: "4/5" → "4★"
+    rows = parse("4/5");
+    QCOMPARE(rows[0].second, QStringLiteral("4\u2605"));
+
+    // High precision: "3.83/5" → "3.83★"
+    rows = parse("3.83/5");
+    QCOMPARE(rows[0].second, QStringLiteral("3.83\u2605"));
+
+    // No "/5" suffix (unexpected format) — pass through unchanged.
+    rows = parse("3.8");
+    QCOMPARE(rows[0].second, QStringLiteral("3.8"));
 }
 
 // ----------------------------------------------------------------------
