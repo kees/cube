@@ -10,6 +10,7 @@
 #include <QSet>
 
 QT_FORWARD_DECLARE_CLASS(QProcess)
+QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
 
 namespace Ui {
 class MainWindow;
@@ -42,11 +43,16 @@ private:
     void thumbnailStatusUpdate();
     void thumbnailDisplay(const QString &thumbnail);
 
+    void rebuildRatingsBar();
+
     Ui::MainWindow *ui;
     QFileSystemModel *fs;
     QItemSelectionModel *fsSelection;
 
     QStandardItemModel *metadata;
+    QWidget *ratingsBar;
+    QHBoxLayout *ratingsBarLayout;
+    QList<QPair<QString, QString>> currentRatingRows;
 
     // LIFO queue of pending thumbnail paths (back = most recent). Up to
     // thumbnailMaxConcurrent subprocesses run at once (sized to the CPU

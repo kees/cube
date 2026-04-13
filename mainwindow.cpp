@@ -20,6 +20,8 @@
 #include <QStandardPaths>
 
 #include <QFileIconProvider>
+#include <QLabel>
+#include <QHBoxLayout>
 
 #include <unistd.h>
 
@@ -123,6 +125,16 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->grThumbnail->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     ui->grThumbnail->setBackgroundBrush(QBrush(Qt::black, Qt::SolidPattern));
 
+    // Ratings bar: a single-line widget between the thumbnail and the
+    // metadata table, showing [icon] rating pairs equally spaced.
+    // Hidden until ratings are available; rebuilt by rebuildRatingsBar().
+    ratingsBar = new QWidget(this);
+    ratingsBarLayout = new QHBoxLayout(ratingsBar);
+    ratingsBarLayout->setContentsMargins(0, 0, 0, 0);
+    ratingsBarLayout->setSpacing(0);
+    ratingsBar->hide();
+    ui->verticalLayout_4->insertWidget(1, ratingsBar);
+
     // Fetch missing rating-service logos asynchronously. Uses Google's
     // public favicon service to grab 32x32 PNGs — runs only when at
     // least one icon file is absent under ~/.cache/playback/icons/, so
@@ -220,6 +232,8 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
 
     ui->grThumbnail->scene()->clear();
     metadata->clear();
+    currentRatingRows.clear();
+    ratingsBar->hide();
 
     QString heading;
 
@@ -602,13 +616,8 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     if (availableSize.height() / size < 30)
         size /= 2;
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
-    // Scale rating-service icons to match the metadata font height so they
-    // don't look tiny on 4K displays. The source PNGs are 128x128, fetched
-    // at that size specifically so downscaling to any reasonable row height
-    // stays clean.
-    int iconSz = QFontMetrics(QFont(ui->tblMetadata->font().family(), size)).height();
-    ui->tblMetadata->setIconSize(QSize(iconSz, iconSz));
     qDebug() << "metadata font size: " << size;
+    rebuildRatingsBar();
 
     // scale padding by font size. But this doesn't work: it seem to break eliding!
     //int padding = size / 4;
@@ -658,6 +667,44 @@ QIcon MainWindow::ratingIcon(const QString &key)
     return it->icon;
 }
 
+void MainWindow::rebuildRatingsBar()
+{
+    // Clear old content.
+    QLayoutItem *child;
+    while ((child = ratingsBarLayout->takeAt(0)) != nullptr) {
+        delete child->widget();
+        delete child;
+    }
+
+    if (currentRatingRows.isEmpty()) {
+        ratingsBar->hide();
+        return;
+    }
+
+    QFont font = ui->tblMetadata->font();
+    QFontMetrics fm(font);
+    int iconSz = fm.height();
+
+    // [stretch][icon rating][stretch][icon rating][stretch]...
+    // Equal stretch spacers give the 1/(N+1) whitespace distribution.
+    ratingsBarLayout->addStretch(1);
+    for (const auto &entry : currentRatingRows) {
+        QLabel *iconLabel = new QLabel(ratingsBar);
+        iconLabel->setPixmap(ratingIcon(entry.first).pixmap(iconSz, iconSz));
+        iconLabel->setFixedSize(iconSz, iconSz);
+        ratingsBarLayout->addWidget(iconLabel);
+
+        ratingsBarLayout->addSpacing(fm.horizontalAdvance(' '));
+
+        QLabel *textLabel = new QLabel(entry.second, ratingsBar);
+        textLabel->setFont(font);
+        ratingsBarLayout->addWidget(textLabel);
+
+        ratingsBarLayout->addStretch(1);
+    }
+    ratingsBar->show();
+}
+
 void MainWindow::thumbnailDisplay(const QString &thumbnail)
 {
     qDebug() << "want to show " << thumbnail;
@@ -679,27 +726,19 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
     ui->grThumbnail->fitInView(image.rect(), Qt::KeepAspectRatio);
     ui->grThumbnail->centerOn(scene->items()[0]);
 
-    /* Ratings sidecar (optional — only exists for /Movies/ files whose
-     * name matched "Title (Year)" and had a configured OMDb API key).
-     * Ratings rows go above the media-info rows so they're the first
-     * thing visible in the metadata table. Parsing lives in mediainfo.cpp
-     * (parseRatings) so it can be unit-tested without Qt Widgets.
-     * ratingIcon() looks for a user-provided PNG under iconDir, falling
-     * back to a brand-coloured square. iconDir, iconKeys, and
-     * iconFallbackColors are all initialized once in the constructor. */
+    /* Ratings bar (between thumbnail and metadata table). Read the
+     * .ratings sidecar, parse into currentRatingRows, and rebuild the
+     * horizontal bar widget. The bar is a separate widget from the
+     * metadata table — ratings render as [icon] value pairs equally
+     * spaced on a single line, not as table rows. */
     QFile ratings_file(thumbnail + ".ratings");
     if (ratings_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        const QList<QPair<QString, QString>> ratingRows = parseRatings(ratings_file.readAll(), ratingsDisplayOrder);
+        currentRatingRows = parseRatings(ratings_file.readAll(), ratingsDisplayOrder);
         ratings_file.close();
-        for (const auto &entry : ratingRows) {
-            QList<QStandardItem *> row;
-            QStandardItem *label = new QStandardItem();
-            label->setIcon(ratingIcon(entry.first));
-            row.append(label);
-            row.append(new QStandardItem(entry.second));
-            metadata->appendRow(row);
-        }
+    } else {
+        currentRatingRows.clear();
     }
+    rebuildRatingsBar();
 
     /* Media info JSON — parsing lives in mediainfo.cpp so it can be
      * unit-tested without dragging in Qt Widgets. */
