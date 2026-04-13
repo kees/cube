@@ -24,7 +24,7 @@ regenerated when the media file or the thumbnailer script changes.
 Each rating row in the metadata table shows a small service-logo icon.
 Out of the box these are brand-coloured placeholder squares (red for RT,
 yellow for IMDb, green for Metacritic, orange for Letterboxd). To use
-real logos, drop 32x32 PNG files into `~/.config/Outflux/icons/`:
+real logos, drop 32x32 PNG files into `~/.cache/playback/icons/`:
 - `rt.png` — Rotten Tomatoes
 - `imdb.png` — IMDb
 - `metacritic.png` — Metacritic

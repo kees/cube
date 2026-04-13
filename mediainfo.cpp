@@ -9,7 +9,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-QList<QPair<QString, QString>> parseRatings(const QByteArray &json)
+QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
+                                            const QStringList &serviceKeys)
 {
     QList<QPair<QString, QString>> rows;
 
@@ -18,20 +19,14 @@ QList<QPair<QString, QString>> parseRatings(const QByteArray &json)
         return rows;
     QJsonObject obj = doc.object();
 
-    // Display order: RT → IMDb → Metacritic → (future) Letterboxd.
-    // Only add a row when the value is a non-empty string.
-    if (obj["rt"].isString() && !obj["rt"].toString().isEmpty())
-        rows.append({QStringLiteral("RT "), obj["rt"].toString()});
-
-    if (obj["imdb"].isString() && !obj["imdb"].toString().isEmpty())
-        rows.append({QStringLiteral("IMDb "), obj["imdb"].toString()});
-
-    if (obj["metacritic"].isString() && !obj["metacritic"].toString().isEmpty())
-        rows.append({QStringLiteral("Metacritic "), obj["metacritic"].toString()});
-
-    // Future: Letterboxd
-    if (obj["letterboxd"].isString() && !obj["letterboxd"].toString().isEmpty())
-        rows.append({QStringLiteral("Letterboxd "), obj["letterboxd"].toString()});
+    // Iterate in the caller-specified order so the display can be
+    // reordered or filtered by the `ratings_display` config setting.
+    // Each key is both the JSON field name in the .ratings sidecar and
+    // the lookup key for MainWindow::ratingServices (icon/colour/label).
+    for (const auto &key : serviceKeys) {
+        if (obj[key].isString() && !obj[key].toString().isEmpty())
+            rows.append({key, obj[key].toString()});
+    }
 
     return rows;
 }

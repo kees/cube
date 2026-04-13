@@ -50,11 +50,20 @@ MainWindow::MainWindow(QWidget *parent) :
     // Future: letterboxd_apikey, letterboxd_apisecret.
     QString omdb_apikey = settings.value("omdb_apikey", "").toString();
 
+    // Comma-separated list of rating services to display and their order.
+    // Removing a key hides that service; reordering changes the display
+    // order. Empty string disables the ratings display entirely.
+    QString ratingsDisplayStr = settings.value("ratings_display", "rt,imdb,letterboxd,metacritic").toString();
+    ratingsDisplayOrder = ratingsDisplayStr.split(',', Qt::SkipEmptyParts);
+    for (auto &s : ratingsDisplayOrder)
+        s = s.trimmed();
+
     // Save our settings so they can be discovered later
     settings.setValue("toplevel", toplevel);
     settings.setValue("player", program_player);
     settings.setValue("thumbnailer", program_thumbnailer);
     settings.setValue("omdb_apikey", omdb_apikey);
+    settings.setValue("ratings_display", ratingsDisplayStr);
 
     ui->setupUi(this);
 
@@ -116,38 +125,43 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // Fetch missing rating-service logos asynchronously. Uses Google's
     // public favicon service to grab 32x32 PNGs — runs only when at
-    // least one icon file is absent under ~/.config/Outflux/icons/, so
+    // least one icon file is absent under ~/.cache/playback/icons/, so
     // it's a no-op on every startup after the first successful fetch.
     // Failures (no curl, no network) are silent; the colored-square
     // fallbacks in ratingIcon() cover the gap until the next attempt.
+    iconDir = QDir::homePath() + "/.cache/playback/icons/";
+
+    ratingServices = {
+        {"rt",         {"RT ",         "rottentomatoes.com", QColor("#FA320A"), {}}},
+        {"imdb",       {"IMDb ",       "imdb.com",           QColor("#F5C518"), {}}},
+        {"metacritic", {"Metacritic ", "metacritic.com",     QColor("#66CC33"), {}}},
+        {"letterboxd", {"Letterboxd ", "letterboxd.com",     QColor("#FF8000"), {}}},
+    };
+
     {
-        const QString iconDir = QDir::homePath() + "/.config/Outflux/icons/";
-        bool anyMissing = false;
-        for (const char *key : {"rt", "imdb", "metacritic", "letterboxd"}) {
-            if (!QFile::exists(iconDir + QString::fromLatin1(key) + ".png")) {
-                anyMissing = true;
-                break;
-            }
+        // Build the fetch list from ratingServices so the domain table
+        // isn't duplicated between the struct and the bash command.
+        QStringList missing;
+        for (auto it = ratingServices.constBegin(); it != ratingServices.constEnd(); ++it) {
+            if (!QFile::exists(iconDir + it.key() + ".png"))
+                missing.append(it.key() + " " + it->domain);
         }
-        if (anyMissing) {
+        if (!missing.isEmpty()) {
+            QString pairs;
+            for (const auto &m : missing)
+                pairs += "'" + m + "' ";
             QProcess *fetcher = new QProcess(this);
             fetcher->start("bash", QStringList{"-c", QString(
                 "mkdir -p '%1'; "
-                "for pair in "
-                "'rt rottentomatoes.com' "
-                "'imdb imdb.com' "
-                "'metacritic metacritic.com' "
-                "'letterboxd letterboxd.com'; do "
+                "for pair in %2; do "
                 "  key=${pair%% *}; "
                 "  domain=${pair#* }; "
                 "  dest='%1'$key.png; "
-                "  if [ ! -e \"$dest\" ]; then "
-                "    curl -s -L --fail -o \"$dest\" "
-                "      \"https://www.google.com/s2/favicons?domain=$domain&sz=32\" "
-                "      || rm -f \"$dest\"; "
-                "  fi; "
+                "  curl -s -L --fail -o \"$dest\" "
+                "    \"https://www.google.com/s2/favicons?domain=$domain&sz=128\" "
+                "    || rm -f \"$dest\"; "
                 "done"
-            ).arg(iconDir)});
+            ).arg(iconDir, pairs)});
             connect(fetcher,
                     static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
                     fetcher, &QProcess::deleteLater);
@@ -561,6 +575,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     if (availableSize.height() / size < 30)
         size /= 2;
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
+    // Scale rating-service icons to match the metadata font height so they
+    // don't look tiny on 4K displays. The source PNGs are 128x128, fetched
+    // at that size specifically so downscaling to any reasonable row height
+    // stays clean.
+    int iconSz = QFontMetrics(QFont(ui->tblMetadata->font().family(), size)).height();
+    ui->tblMetadata->setIconSize(QSize(iconSz, iconSz));
     qDebug() << "metadata font size: " << size;
 
     // scale padding by font size. But this doesn't work: it seem to break eliding!
@@ -568,6 +588,47 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     //ui->tblMetadata->setStyleSheet(QString("QTableView::item { border: 0px; padding: %1px; }").arg(padding));
     // make sure eliding is disabled (doesn't seem to work with padding above??)
     ui->tblMetadata->setTextElideMode(Qt::ElideNone);
+}
+
+QIcon MainWindow::ratingIcon(const QString &key)
+{
+    auto it = ratingServices.find(key);
+    if (it == ratingServices.end())
+        return QIcon();
+    if (!it->icon.isNull())
+        return it->icon;
+
+    const QString path = iconDir + key + ".png";
+    if (QFile::exists(path)) {
+        it->icon = QIcon(path);
+    } else {
+        // Render the human-readable label as text on a brand-coloured
+        // background, sized to fit the text (not a fixed square).
+        QString text = it->label.trimmed();
+        QFont font;
+        font.setPixelSize(64);
+        QFontMetrics fm(font);
+        int padding = fm.height() / 4;
+        int w = fm.horizontalAdvance(text) + padding * 2;
+        int h = fm.height() + padding * 2;
+
+        QPixmap pm(w, h);
+        pm.fill(it->fallbackColor);
+
+        // Pick white or black text for readability based on background
+        // luminance.
+        const QColor &bg = it->fallbackColor;
+        qreal lum = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF();
+
+        QPainter painter(&pm);
+        painter.setFont(font);
+        painter.setPen(lum > 0.5 ? Qt::black : Qt::white);
+        painter.drawText(pm.rect(), Qt::AlignCenter, text);
+        painter.end();
+
+        it->icon = QIcon(pm);
+    }
+    return it->icon;
 }
 
 void MainWindow::thumbnailDisplay(const QString &thumbnail)
@@ -596,59 +657,17 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
      * Ratings rows go above the media-info rows so they're the first
      * thing visible in the metadata table. Parsing lives in mediainfo.cpp
      * (parseRatings) so it can be unit-tested without Qt Widgets.
-     *
-     * Each rating row gets a small service-logo icon via ratingIcon():
-     * looks for a user-provided PNG at ~/.config/Outflux/icons/<key>.png
-     * (e.g. rt.png, imdb.png, metacritic.png, letterboxd.png), and if
-     * the file isn't there, falls back to a brand-coloured square so the
-     * table always has *something* in the icon column. To upgrade from
-     * placeholders to real logos, just drop the PNGs there — no rebuild. */
-    static const QString iconDir = QDir::homePath() + "/.config/Outflux/icons/";
-
-    static auto ratingIcon = [](const QString &key) -> QIcon {
-        static QHash<QString, QIcon> cache;
-        if (cache.contains(key))
-            return cache[key];
-
-        const QString path = iconDir + key + ".png";
-        if (QFile::exists(path)) {
-            QIcon icon(path);
-            cache[key] = icon;
-            return icon;
-        }
-
-        // Brand-coloured placeholder: a solid square in the service's
-        // primary colour, so the rating rows are visually distinct even
-        // without real logos installed.
-        QPixmap pm(32, 32);
-        if      (key == "rt")         pm.fill(QColor("#FA320A"));
-        else if (key == "imdb")       pm.fill(QColor("#F5C518"));
-        else if (key == "metacritic") pm.fill(QColor("#66CC33"));
-        else if (key == "letterboxd") pm.fill(QColor("#FF8000"));
-        else                          pm.fill(Qt::gray);
-        QIcon icon(pm);
-        cache[key] = icon;
-        return icon;
-    };
-
-    // Map label text → icon key for the services we know about.
-    static const QHash<QString, QString> iconKeys = {
-        {QStringLiteral("RT "),         QStringLiteral("rt")},
-        {QStringLiteral("IMDb "),       QStringLiteral("imdb")},
-        {QStringLiteral("Metacritic "), QStringLiteral("metacritic")},
-        {QStringLiteral("Letterboxd "), QStringLiteral("letterboxd")},
-    };
-
+     * ratingIcon() looks for a user-provided PNG under iconDir, falling
+     * back to a brand-coloured square. iconDir, iconKeys, and
+     * iconFallbackColors are all initialized once in the constructor. */
     QFile ratings_file(thumbnail + ".ratings");
     if (ratings_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        const QList<QPair<QString, QString>> ratingRows = parseRatings(ratings_file.readAll());
+        const QList<QPair<QString, QString>> ratingRows = parseRatings(ratings_file.readAll(), ratingsDisplayOrder);
         ratings_file.close();
         for (const auto &entry : ratingRows) {
             QList<QStandardItem *> row;
-            QStandardItem *label = new QStandardItem(entry.first);
-            auto it = iconKeys.constFind(entry.first);
-            if (it != iconKeys.constEnd())
-                label->setIcon(ratingIcon(*it));
+            QStandardItem *label = new QStandardItem();
+            label->setIcon(ratingIcon(entry.first));
             row.append(label);
             row.append(new QStandardItem(entry.second));
             metadata->appendRow(row);

@@ -26,6 +26,12 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json);
 // media-info rows. Empty/missing fields are silently skipped. Returns an
 // empty list when the input is absent or unparseable, so callers can
 // unconditionally prepend the result without a "has ratings" check.
-QList<QPair<QString, QString>> parseRatings(const QByteArray &json);
+// `serviceKeys` controls which rating services to include and in what
+// order. Each entry is a JSON field name in the .ratings sidecar (e.g.
+// "rt", "imdb", "metacritic", "letterboxd"). Populated from the
+// `ratings_display` config setting so the user can reorder or disable
+// individual sources at runtime.
+QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
+                                            const QStringList &serviceKeys);
 
 #endif // MEDIAINFO_H

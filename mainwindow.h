@@ -66,6 +66,17 @@ private:
     // be located; in that case the cache's "is the script newer than the
     // thumb?" check is skipped.
     QString thumbnailerPath;
+    QString iconDir;
+
+    struct RatingService {
+        QString label;
+        QString domain;
+        QColor fallbackColor;
+        QIcon icon;
+    };
+    QHash<QString, RatingService> ratingServices;
+    QStringList ratingsDisplayOrder;
+    QIcon ratingIcon(const QString &key);
 
     QModelIndex currentIndex;
     QString currentFile;
