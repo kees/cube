@@ -495,34 +495,61 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     event->accept();
 }
 
+QString MainWindow::resolveMediaFile(const QModelIndex &index) const
+{
+    if (!index.isValid())
+        return QString();
+
+    if (!fs->isDir(index))
+        return fs->filePath(index);
+
+    // Directory: resolve to its first contained file using a QCollator
+    // configured to match QFileSystemModel's own ordering (case-
+    // insensitive, numeric/natural, locale-aware) so the file we pick is
+    // the one the tree view would display first. QDir::Name alone is raw
+    // ASCII case-sensitive, which disagrees with the tree view whenever
+    // extension case differs.
+    QFileInfoList entries = QDir(fs->filePath(index)).entryInfoList(
+        QDir::Files | QDir::NoDotAndDotDot, QDir::NoSort);
+    if (entries.isEmpty())
+        return QString();
+
+    QCollator collator;
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    std::sort(entries.begin(), entries.end(),
+              [&collator](const QFileInfo &a, const QFileInfo &b) {
+        return collator.compare(a.fileName(), b.fileName()) < 0;
+    });
+    return entries.first().absoluteFilePath();
+}
+
 void MainWindow::thumbnailRequestCurrent()
 {
-    // If we've settled on a directory, resolve it to its first contained
-    // media file so single-file directories show their thumbnail/metadata
-    // without the user drilling in. FileSystemHighlight cleared currentFile
-    // when the selection landed on a directory.
-    //
-    // Sort with a QCollator configured to match QFileSystemModel's own
-    // ordering (case-insensitive, numeric/natural, locale-aware) so the
-    // file we pick is actually the one the tree view displays first.
-    // QDir::Name alone is raw ASCII case-sensitive, which disagrees with
-    // the tree view whenever extension case differs.
-    if (currentFile.isEmpty() && fs->isDir(currentIndex)) {
-        QFileInfoList entries = QDir(currentPath).entryInfoList(
-            QDir::Files | QDir::NoDotAndDotDot, QDir::NoSort);
-        if (!entries.isEmpty()) {
-            QCollator collator;
-            collator.setNumericMode(true);
-            collator.setCaseSensitivity(Qt::CaseInsensitive);
-            std::sort(entries.begin(), entries.end(),
-                      [&collator](const QFileInfo &a, const QFileInfo &b) {
-                return collator.compare(a.fileName(), b.fileName()) < 0;
-            });
-            currentFile = entries.first().absoluteFilePath();
-        }
-    }
+    // Resolve the current selection to a media file. For file selections,
+    // FSH already set currentFile; for directory selections, resolve to
+    // the first contained file.
+    if (currentFile.isEmpty())
+        currentFile = resolveMediaFile(currentIndex);
     if (!currentFile.isEmpty())
         this->thumbnailRequest(currentFile);
+
+    // Prefetch: simulate pressing Down 3 times and Up 3 times. Each
+    // step lands on the next/prev tree-view item (file or directory),
+    // resolved to a media file via the same logic as the current
+    // selection. This pre-populates the cache so navigation in either
+    // direction finds a warm thumbnail.
+    for (int dir = 0; dir < 2; dir++) {
+        QModelIndex pfIdx = currentIndex;
+        for (int i = 0; i < 3; i++) {
+            pfIdx = dir == 0 ? ui->lstFiles->indexBelow(pfIdx)
+                             : ui->lstFiles->indexAbove(pfIdx);
+            if (!pfIdx.isValid()) break;
+            QString pfFile = resolveMediaFile(pfIdx);
+            if (!pfFile.isEmpty())
+                thumbnailRequest(pfFile);
+        }
+    }
 }
 
 void MainWindow::keyReleaseEvent(QKeyEvent *event)
