@@ -37,6 +37,7 @@ private slots:
     void moveWatcher(const QModelIndex &index);
 
 private:
+    QString thumbnailCachePath(const QString &mediaPathName) const;
     QString thumbnailCacheLookup(const QString &mediaPathName) const;
     QString resolveMediaFile(const QModelIndex &index) const;
     void thumbnailRequestCurrent();

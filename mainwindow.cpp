@@ -277,16 +277,15 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     currentFile = path;
 }
 
-QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
+QString MainWindow::thumbnailCachePath(const QString &mediaPathName) const
 {
     // Replicate the thumbnailer script's cache layout:
     //   CACHE=~/.cache/playback/thumbnails
     //   HASH=sha256(realpath($MEDIA))       // echo -n, no trailing newline
     //   THUMB=$CACHE/${HASH:0:2}/$HASH.png
-    //   JSON=$THUMB.json
-    // If both sidecar files exist and neither is older than the media file,
-    // the script would just print the cached paths, so we can skip the
-    // subprocess entirely. Invalidation is "delete from ~/.cache/playback".
+    // Sidecars are $THUMB.json and $THUMB.ratings. Returns the PNG path
+    // regardless of whether any of the three files exist; callers append
+    // ".json" / ".ratings" as needed.
     const QString canonical = QFileInfo(mediaPathName).canonicalFilePath();
     if (canonical.isEmpty())
         return QString();
@@ -294,8 +293,20 @@ QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
     const QString hashHex = QString::fromLatin1(
         QCryptographicHash::hash(canonical.toUtf8(), QCryptographicHash::Sha256).toHex());
     const QString cacheRoot = QDir::homePath() + "/.cache/playback/thumbnails";
-    const QString thumb = QString("%1/%2/%3.png").arg(cacheRoot, hashHex.left(2), hashHex);
+    return QString("%1/%2/%3.png").arg(cacheRoot, hashHex.left(2), hashHex);
+}
+
+QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
+{
+    // If both sidecar files exist and neither is older than the media file,
+    // the thumbnailer script would just print the cached paths, so we can
+    // skip the subprocess entirely. Invalidation is "delete from
+    // ~/.cache/playback".
+    const QString thumb = thumbnailCachePath(mediaPathName);
+    if (thumb.isEmpty())
+        return QString();
     const QString json = thumb + ".json";
+    const QString canonical = QFileInfo(mediaPathName).canonicalFilePath();
 
     const QFileInfo thumbInfo(thumb);
     const QFileInfo jsonInfo(json);
@@ -505,18 +516,29 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 
         break;
 
-    // Remove an item from the recent list
+    // Remove an item from the recent list, or invalidate cached
+    // thumbnail/metadata/ratings for a /Movies/ entry so it's re-fetched.
     case Qt::Key_VolumeMute:
         index = ui->lstFiles->currentIndex();
         path = fs->filePath(index);
 
         qDebug() << "Muting: " << path;
 
-        if (!path.contains("/Recent/"))
-            break;
-
-        args << "--" << path;
-        QProcess::execute("rm", args);
+        if (path.contains("/Recent/")) {
+            args << "--" << path;
+            QProcess::execute("rm", args);
+        } else if (path.contains("/Movies/")) {
+            QString media = resolveMediaFile(index);
+            if (media.isEmpty())
+                break;
+            QString thumb = thumbnailCachePath(media);
+            if (thumb.isEmpty())
+                break;
+            QFile::remove(thumb);
+            QFile::remove(thumb + ".json");
+            QFile::remove(thumb + ".ratings");
+            thumbnailRequest(media);
+        }
         break;
 
     default:
