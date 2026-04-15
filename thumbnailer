@@ -152,55 +152,65 @@ do_ratings()
 
 	# --- Letterboxd (web scrape via og:title year check + JSON-LD rating) ---
 	local letterboxd=""
-	local slug
-	# Transliterate accented characters to ASCII (é→e, ü→u, etc.) so
-	# "Amélie" produces slug "amelie" not "am-lie". iconv's //TRANSLIT
-	# also converts Unicode right-single-quote (U+2019) to ASCII
-	# apostrophe, so curly-quote titles are handled the same way as
-	# straight-quote titles below. Apostrophes are then stripped before
-	# the general punctuation→hyphen pass — Letterboxd drops them
-	# entirely rather than converting to a hyphen, so "The Devil's
-	# Backbone" → "the-devils-backbone" (not "the-devil-s-backbone",
-	# which 404s).
-	slug=$(echo "$title" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
-		| tr '[:upper:]' '[:lower:]' \
-		| sed -e "s/'//g" -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
 
-	if [ -n "$slug" ]; then
-		# Try the bare slug first (most films), then the year-suffixed
-		# slug (for title collisions where Letterboxd disambiguates by
-		# appending the year, e.g. /film/the-matrix-2025/).
+	# Build a list of candidate titles to try. Some Letterboxd slugs use
+	# the full title ("terminator-2-judgment-day"), some use just the
+	# main title ("terminator-2"), so we try the full form first and
+	# fall back to progressively shorter variants.
+	local -a candidate_titles=("$title")
+	local shortened
+	shortened=$(echo "$title" | sed 's/ - .*//')
+	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
+	shortened=$(echo "$title" | sed 's/:.*//')
+	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
+
+	local tried_slugs=""
+	local candidate slug lb_url lb_page lb_num
+	for candidate in "${candidate_titles[@]}"; do
+		# Build slug from candidate title. Transliterate accented
+		# characters (é→e, ü→u, etc.) so "Amélie" produces "amelie" not
+		# "am-lie". iconv's //TRANSLIT also normalises Unicode right-
+		# single-quote (U+2019) to ASCII apostrophe. Apostrophes are
+		# stripped before the general punctuation→hyphen pass —
+		# Letterboxd drops them entirely rather than converting to a
+		# hyphen, so "The Devil's Backbone" → "the-devils-backbone"
+		# (not "the-devil-s-backbone", which 404s).
+		slug=$(echo "$candidate" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
+			| tr '[:upper:]' '[:lower:]' \
+			| sed -e "s/'//g" -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
+		[ -n "$slug" ] || continue
+		tried_slugs="$tried_slugs $slug"
+
+		# For each candidate slug, try the bare form first then the
+		# year-suffixed form (Letterboxd disambiguates title
+		# collisions with a -YYYY suffix, e.g. /film/the-matrix-2025/).
 		for lb_url in \
 			"https://letterboxd.com/film/$slug/" \
 			"https://letterboxd.com/film/$slug-$year/"; do
 
-			local lb_page
 			lb_page=$(curl -s -L --fail "$lb_url" 2>/dev/null) || continue
 			[ -n "$lb_page" ] || continue
 
-			# Verify the year matches via the og:title meta tag,
-			# which includes the year in parentheses:
+			# Verify the year matches via the og:title meta tag:
 			#   <meta property="og:title" content="The Matrix (1999)">
 			echo "$lb_page" | grep -q 'property="og:title".*'"($year)" || continue
 
 			# Extract the rating from the JSON-LD aggregateRating
-			# block embedded in the page. More stable than parsing
-			# HTML display elements; the schema.org markup is part
-			# of their SEO and rarely changes.
-			#   "ratingValue":3.83
-			local lb_num
+			# block. More stable than HTML display elements since
+			# the schema.org markup is part of their SEO and rarely
+			# changes: "ratingValue":3.83
 			lb_num=$(echo "$lb_page" | grep -o '"ratingValue":[0-9.]*' \
 				| head -1 | sed 's/"ratingValue"://')
 			if [ -n "$lb_num" ]; then
 				letterboxd="$(printf '%g' "$lb_num")/5"
 				echo "$media: Letterboxd ($lb_url): $letterboxd" >> "$LOG"
 			fi
-			break
+			break 2
 		done
+	done
 
-		if [ -z "$letterboxd" ]; then
-			echo "$media: Letterboxd lookup failed for slug '$slug'" >> "$LOG"
-		fi
+	if [ -z "$letterboxd" ]; then
+		echo "$media: Letterboxd lookup failed for slugs:$tried_slugs" >> "$LOG"
 	fi
 
 	# Only write the .ratings file if we got at least one rating or plot.
