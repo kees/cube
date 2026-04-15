@@ -60,12 +60,19 @@ MainWindow::MainWindow(QWidget *parent) :
     for (auto &s : ratingsDisplayOrder)
         s = s.trimmed();
 
+    // Media column width as a fraction of the window width. Default 1/3.
+    // Values outside [0.1, 0.9] are clamped — a column narrower than
+    // 10% or wider than 90% of the window would be unusable.
+    mediaColumnWidth = settings.value("media_column_width", 1.0 / 3.0).toDouble();
+    mediaColumnWidth = qBound(0.1, mediaColumnWidth, 0.9);
+
     // Save our settings so they can be discovered later
     settings.setValue("toplevel", toplevel);
     settings.setValue("player", program_player);
     settings.setValue("thumbnailer", program_thumbnailer);
     settings.setValue("omdb_apikey", omdb_apikey);
     settings.setValue("ratings_display", ratingsDisplayStr);
+    settings.setValue("media_column_width", mediaColumnWidth);
 
     ui->setupUi(this);
 
@@ -614,7 +621,7 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     const QSize availableSize = this->size(); // QApplication::desktop()->availableGeometry(this).size();
-    int width = availableSize.width() / 4;
+    int width = availableSize.width() * mediaColumnWidth;
     float ratio = (float)availableSize.width() / (float)availableSize.height();
     qDebug() << "window size available: " << availableSize.width() << "x" << availableSize.height() << " (" << ratio << ")";
     qDebug() << "thumbnail size chosen: " << width << "x" << (int)(width * ratio);
