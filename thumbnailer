@@ -163,16 +163,19 @@ do_ratings()
 				continue
 			fi
 
-			# Pick the first result whose Title (case-insensitive,
-			# transliterated) starts with this candidate. Rejects
-			# stubs like "Episode 6 - ..." because they don't start
-			# with the query. Uses the candidate (not the original
-			# title) so shortened queries still prefix-match the
-			# real entry (e.g. "terminator 2" prefixes "Terminator
-			# 2: Judgment Day").
-			cand_lc=$(echo "$scand" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr '[:upper:]' '[:lower:]')
-			match=$(echo "$search_response" | jq -r --arg t "$cand_lc" \
-				'.Search // [] | map(select(.Title | ascii_downcase | startswith($t))) | .[0] // empty')
+			# Pick the first result whose Title (normalized) starts
+			# with the normalized candidate. Normalization:
+			# lowercase, transliterate accents, strip everything
+			# non-alphanumeric. Rejects stubs like "Episode 6 -
+			# ..." because "episode6..." doesn't start with
+			# "terminator2". Forgiving of punctuation drift
+			# between filename and OMDb entry (colons, apostrophes,
+			# hyphens) — e.g. "My Little Pony The Movie" (filename)
+			# matches "My Little Pony: The Movie" (OMDb) because
+			# both normalize to "mylittleponythemovie".
+			cand_norm=$(echo "$scand" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+			match=$(echo "$search_response" | jq -r --arg t "$cand_norm" \
+				'.Search // [] | map(select(.Title | ascii_downcase | gsub("[^a-z0-9]"; "") | startswith($t))) | .[0] // empty')
 			if [ -n "$match" ]; then
 				best_id=$(echo "$match" | jq -r '.imdbID')
 				omdb_title=$(echo "$match" | jq -r '.Title')
