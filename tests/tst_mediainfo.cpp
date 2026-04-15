@@ -95,6 +95,9 @@ private slots:
     void subtitles_unspecifiedLanguage();
     void subtitles_unspecifiedWithTitle();
 
+    // --- Dedup of identical rows across tracks ---
+    void dedup_duplicateRowsCollapsed();
+
     // --- Ratings sidecar (parseRatings) ---
     void ratings_allPresent();
     void ratings_partialFields();
@@ -887,6 +890,41 @@ void TestMediaInfo::subtitles_unspecifiedWithTitle()
     const Rows rows = parseMediaInfo(json);
     QCOMPARE(rows.size(), 1);
     QCOMPARE(rows[0].second, QStringLiteral("unspecified (Commentary)"));
+}
+
+// ----------------------------------------------------------------------
+// Dedup: when the same (label, value) pair would be emitted more than
+// once (e.g. two identically-configured audio tracks, or two English
+// subtitle tracks that share everything parseMediaInfo inspects), the
+// second and subsequent duplicates are dropped. Order of first
+// appearance is preserved.
+// ----------------------------------------------------------------------
+
+void TestMediaInfo::dedup_duplicateRowsCollapsed()
+{
+    const QByteArray json = R"({"media":{"track":[
+        {"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","FrameRate":"23.976"},
+        {"@type":"Audio","Format":"FLAC","Language":"English","ChannelPositions":"Front: L C R, Side: L R, LFE"},
+        {"@type":"Audio","Format":"FLAC","Language":"English","ChannelPositions":"Front: L C R, Side: L R, LFE"},
+        {"@type":"Audio","Format":"AC-3","Language":"English","ChannelPositions":"Front: L R"},
+        {"@type":"Text","Language":"English","Title":"SDH"},
+        {"@type":"Text","Language":"English","Title":"SDH"},
+        {"@type":"Text","Language":"French"}
+    ]}})";
+    const Rows rows = parseMediaInfo(json);
+    // Expected: 1 AVC + 1 Size + 1 FLAC (duplicate skipped) + 1 AC-3 +
+    // 1 English SDH (duplicate skipped) + 1 French = 6 rows.
+    QCOMPARE(rows.size(), 6);
+    QCOMPARE(rows[0].first, QStringLiteral("AVC "));
+    QCOMPARE(rows[1].first, QStringLiteral("Full HD "));
+    QCOMPARE(rows[2], Row(QStringLiteral("FLAC (English) "),
+                          QStringLiteral("Front: L C R, Side: L R, LFE")));
+    QCOMPARE(rows[3], Row(QStringLiteral("AC-3 (English) "),
+                          QStringLiteral("Front: L R")));
+    QCOMPARE(rows[4], Row(QStringLiteral("Subtitles "),
+                          QStringLiteral("English (SDH)")));
+    QCOMPARE(rows[5], Row(QStringLiteral("Subtitles "),
+                          QStringLiteral("French")));
 }
 
 // ----------------------------------------------------------------------

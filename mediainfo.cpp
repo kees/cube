@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QtMath>
 
 QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
@@ -373,5 +374,19 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
         }
     }
 
-    return rows;
+    // Deduplicate while preserving insertion order. Multi-track files
+    // often have identical Audio or Subtitles rows (e.g. two English
+    // FLAC 5.1 tracks, or a pair of English/English-SDH subtitle tracks
+    // that share everything parseMediaInfo inspects). Showing the same
+    // (label, value) twice is just noise.
+    QList<QPair<QString, QString>> deduped;
+    deduped.reserve(rows.size());
+    QSet<QPair<QString, QString>> seen;
+    for (const auto &row : rows) {
+        if (!seen.contains(row)) {
+            seen.insert(row);
+            deduped.append(row);
+        }
+    }
+    return deduped;
 }
