@@ -213,10 +213,23 @@ def parse_title_year(media):
 def omdb_call(params):
     """Return the parsed JSON response, or a synthetic Response=False
     dict when the request fails (so callers can branch uniformly on
-    .Response)."""
+    .Response). OMDb returns HTTP 401 with a JSON body for both auth
+    and rate-limit problems, distinguishable only by the .Error text
+    ("Invalid API key!" vs "Request limit reached!") — so we try to
+    parse the error body instead of just reporting the status code."""
     OMDB_URL = "https://www.omdbapi.com/"
+    url = OMDB_URL + "?" + urllib.parse.urlencode(params)
     try:
-        return http_json(OMDB_URL + "?" + urllib.parse.urlencode(params))
+        return http_json(url)
+    except urllib.error.HTTPError as e:
+        try:
+            data = json.loads(e.read().decode())
+            if isinstance(data, dict) and "Error" in data:
+                return {"Response": "False",
+                        "Error": f"HTTP {e.code}: {data['Error']}"}
+        except Exception:
+            pass
+        return {"Response": "False", "Error": f"HTTP {e.code}"}
     except Exception as e:
         return {"Response": "False", "Error": str(e)}
 
