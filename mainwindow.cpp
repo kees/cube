@@ -466,6 +466,16 @@ void MainWindow::thumbnailStatusUpdate()
     row.append(new QStandardItem("Queued "));
     row.append(new QStandardItem(QString::number(thumbnailQueue.size())));
     metadata->appendRow(row);
+
+    // Dump the queue contents in processing order (LIFO: the last
+    // entry runs next, so walk back-to-front). Filename only, no
+    // path, labelled by 1-based slot number.
+    for (int i = thumbnailQueue.size() - 1, n = 1; i >= 0; --i, ++n) {
+        row.clear();
+        row.append(new QStandardItem(QString("%1 ").arg(n)));
+        row.append(new QStandardItem(QFileInfo(thumbnailQueue.at(i)).fileName()));
+        metadata->appendRow(row);
+    }
 }
 
 void MainWindow::FileSystemExpanded(const QModelIndex &index)
