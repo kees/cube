@@ -534,10 +534,20 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
             QString thumb = thumbnailCachePath(media);
             if (thumb.isEmpty())
                 break;
+            qDebug() << "invalidating cache:" << thumb << "(+ .json/.ratings) for" << media;
+            // Save and restore selection: deleting files under
+            // ~/.cache/playback/ with toplevel=/ makes QFileSystemModel
+            // re-sort visible subtrees, which can knock the current
+            // index off the user's row. Re-pin it after the work.
+            QPersistentModelIndex saved(index);
             QFile::remove(thumb);
             QFile::remove(thumb + ".json");
             QFile::remove(thumb + ".ratings");
             thumbnailRequest(media);
+            if (saved.isValid() && ui->lstFiles->currentIndex() != saved) {
+                ui->lstFiles->setCurrentIndex(saved);
+                ui->lstFiles->scrollTo(saved);
+            }
         }
         break;
 
