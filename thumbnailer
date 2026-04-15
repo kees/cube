@@ -54,11 +54,16 @@ do_thumbnail()
 			continue
 		fi
 
-		# Check for a boring thumbnail (i.e. mostly the same color)
-		COLORS=8
-		COUNT=$(convert "$NEW" +dither -colors "$COLORS" -unique-colors txt: | grep -v '^#' | wc -l)
-		if [ $COUNT -ge $COLORS ] ; then
-			# Good colors, stop.
+		# Check for a boring thumbnail (i.e. mostly the same color).
+		# Standard deviation of pixel intensities (0..1) is a cleaner
+		# signal than counting distinct colors — a near-black frame can
+		# still have 8 "unique" values that differ by one per channel,
+		# which the old -colors/-unique-colors check happily accepted.
+		# Real content frames sit around 0.1+; studio logos/title cards
+		# around 0.02-0.04; uniform frames near 0. awk does the float
+		# compare since bash's [ can't.
+		STDDEV=$(convert "$NEW" -format "%[fx:standard_deviation]" info:)
+		if awk -v s="$STDDEV" 'BEGIN { exit !(s > 0.05) }' ; then
 			break
 		fi
 	done
