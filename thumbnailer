@@ -28,9 +28,9 @@ from pathlib import Path
 
 
 HOME = Path.home()
-CACHE = HOME / ".cache" / "playback" / "thumbnails"
+CACHE    = HOME / ".cache" / "playback" / "thumbnails"
 LOG_PATH = HOME / ".cache" / "playback" / "thumbnailer.log"
-CONFIG = HOME / ".config" / "Outflux" / "playback-walker.conf"
+CONFIG   = HOME / ".config" / "Outflux" / "playback-walker.conf"
 
 # Scan order for frame selection. Frame 0 is tried first since most
 # films have a representative opening shot; the rest are fallback
@@ -45,10 +45,6 @@ STDDEV_THRESHOLD = 0.07
 
 HTTP_TIMEOUT = 15
 USER_AGENT = "Mozilla/5.0"
-
-OMDB_URL = "https://www.omdbapi.com/"
-LETTERBOXD_URL = "https://letterboxd.com/film/{slug}/"
-
 
 def log(msg):
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +208,7 @@ def omdb_call(params):
     """Return the parsed JSON response, or a synthetic Response=False
     dict when the request fails (so callers can branch uniformly on
     .Response)."""
+    OMDB_URL = "https://www.omdbapi.com/"
     try:
         return http_json(OMDB_URL + "?" + urllib.parse.urlencode(params))
     except Exception as e:
