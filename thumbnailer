@@ -18,12 +18,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -132,51 +135,53 @@ def stddev(path):
         return None
 
 
-def with_link(target, link):
-    """Context-manager-ish helper: create a symlink to `target` at
-    `link`, yield, then always remove the symlink on exit."""
-    if link.is_symlink() or link.exists():
-        link.unlink()
-    link.symlink_to(target)
-
-
-def drop_link(link):
+@contextmanager
+def link_to(target, ext):
+    """Create a symlink to `target` inside a fresh temp directory,
+    preserving the file extension (mpv sniffs format from the name).
+    Yields the symlink path; removes the whole directory on exit. Uses
+    tempfile.mkdtemp so the name is unique by OS guarantee rather than
+    by $$ collision avoidance."""
+    tmpdir = Path(tempfile.mkdtemp(prefix="thumbnailer-"))
     try:
-        link.unlink()
-    except FileNotFoundError:
-        pass
+        link = tmpdir / f"media.{ext}"
+        link.symlink_to(target)
+        yield link
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def do_thumbnail(media, new_path, thumb_path, link):
-    with_link(media, link)
-    try:
+def do_thumbnail(media, new_path, thumb_path, ext):
+    # mpv's --o picks the output encoder from the filename extension,
+    # so we write to a ".png"-suffixed scratch sibling and rename on
+    # success. Matches the same "new_path as stem" convention used
+    # for .json / .ratings sidecars below.
+    scratch = Path(f"{new_path}.png")
+    with link_to(media, ext) as link:
         last_frame = None
         for frame in FRAMES:
-            if not mpv_frame(link, new_path, frame):
+            if not mpv_frame(link, scratch, frame):
                 continue
             last_frame = frame
-            sd = stddev(new_path)
+            sd = stddev(scratch)
             if sd is not None and sd > STDDEV_THRESHOLD:
                 break
 
-        if new_path.exists():
+        if scratch.exists():
             log(f"{media}: using frame {last_frame}")
         else:
             log(f"{media}: gave up")
             # Couldn't extract any frame — write a black placeholder so
             # future runs don't retry forever.
             subprocess.run(
-                ["convert", "-size", "1280x720", "xc:black", str(new_path)],
+                ["convert", "-size", "1280x720", "xc:black", str(scratch)],
                 check=False,
             )
-        new_path.replace(thumb_path)
-    finally:
-        drop_link(link)
+        scratch.replace(thumb_path)
 
 
-def do_json(media, new_path, json_path, link):
-    with_link(media, link)
-    try:
+def do_json(media, new_path, json_path, ext):
+    with link_to(media, ext) as link:
         new_json = Path(f"{new_path}.json")
         with open(LOG_PATH, "a") as logf, open(new_json, "wb") as out:
             r = subprocess.run(["mediainfo", "--Output=JSON", str(link)],
@@ -184,9 +189,10 @@ def do_json(media, new_path, json_path, link):
         if r.returncode == 0:
             new_json.replace(json_path)
         else:
-            drop_link(new_json)
-    finally:
-        drop_link(link)
+            try:
+                new_json.unlink()
+            except FileNotFoundError:
+                pass
 
 
 TITLE_YEAR_RE = re.compile(r"^(.+) \((\d{4})\)$")
@@ -379,16 +385,15 @@ def main():
     thumb    = CACHE / index / f"{h}.png"
     json_sidecar = Path(f"{thumb}.json")
     ratings      = Path(f"{thumb}.ratings")
-    link = Path(f"/tmp/thumbnailer-{os.getpid()}.{base_ext}")
     self_path = os.path.abspath(__file__)
 
     if is_stale(thumb, media, self_path):
-        do_thumbnail(media, new_path, thumb, link)
+        do_thumbnail(media, new_path, thumb, base_ext)
     else:
         log(f"{media}: using thumb {thumb}")
 
     if is_stale(json_sidecar, media, self_path):
-        do_json(media, new_path, json_sidecar, link)
+        do_json(media, new_path, json_sidecar, base_ext)
     else:
         log(f"{media}: using json {json_sidecar}")
 
