@@ -131,9 +131,15 @@ do_ratings()
 	local rt="" imdb="" metacritic="" plot=""
 	if [ -n "$OMDB_KEY" ]; then
 		local omdb_response
+		# type=movie filters out episodes/series — without it OMDb's
+		# fuzzy title match will happily return things like "Episode 6
+		# - Terminator 2: Judgement Day (1991)" (a 2016 review-show
+		# episode) for a "Terminator 2" query.
 		omdb_response=$(curl -s -G "https://www.omdbapi.com/" \
 			--data-urlencode "t=$title" \
 			--data-urlencode "y=$year" \
+			--data-urlencode "type=movie" \
+			--data-urlencode "plot=short" \
 			--data-urlencode "apikey=$OMDB_KEY")
 
 		local response_ok
