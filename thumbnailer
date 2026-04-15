@@ -149,16 +149,17 @@ do_ratings()
 	local letterboxd=""
 	local slug
 	# Transliterate accented characters to ASCII (é→e, ü→u, etc.) so
-	# "Amélie" produces slug "amelie" not "am-lie". iconv is part of
-	# glibc and available on essentially every Linux system.
-	if command -v iconv >/dev/null 2>&1; then
-		slug=$(echo "$title" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
-			| tr '[:upper:]' '[:lower:]' \
-			| sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
-	else
-		slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' \
-			| sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
-	fi
+	# "Amélie" produces slug "amelie" not "am-lie". iconv's //TRANSLIT
+	# also converts Unicode right-single-quote (U+2019) to ASCII
+	# apostrophe, so curly-quote titles are handled the same way as
+	# straight-quote titles below. Apostrophes are then stripped before
+	# the general punctuation→hyphen pass — Letterboxd drops them
+	# entirely rather than converting to a hyphen, so "The Devil's
+	# Backbone" → "the-devils-backbone" (not "the-devil-s-backbone",
+	# which 404s).
+	slug=$(echo "$title" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
+		| tr '[:upper:]' '[:lower:]' \
+		| sed -e "s/'//g" -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
 
 	if [ -n "$slug" ]; then
 		# Try the bare slug first (most films), then the year-suffixed
