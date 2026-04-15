@@ -11,6 +11,7 @@
 
 QT_FORWARD_DECLARE_CLASS(QProcess)
 QT_FORWARD_DECLARE_CLASS(QHBoxLayout)
+QT_FORWARD_DECLARE_CLASS(QLabel)
 
 namespace Ui {
 class MainWindow;
@@ -53,6 +54,7 @@ private:
     QWidget *ratingsBar;
     QHBoxLayout *ratingsBarLayout;
     QList<QPair<QString, QString>> currentRatingRows;
+    QLabel *plotLabel;
 
     // LIFO queue of pending thumbnail paths (back = most recent). Up to
     // thumbnailMaxConcurrent subprocesses run at once (sized to the CPU

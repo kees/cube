@@ -107,6 +107,10 @@ private slots:
     void ratings_emptyOrder();
     void ratings_imdbConversion();
     void ratings_letterboxdStar();
+    void plot_present();
+    void plot_missing();
+    void plot_empty();
+    void plot_malformed();
 
     // --- Degenerate input ---
     void empty_json();
@@ -1072,6 +1076,45 @@ void TestMediaInfo::ratings_letterboxdStar()
     // No "/5" suffix (unexpected format) — pass through unchanged.
     rows = parse("3.8");
     QCOMPARE(rows[0].second, QStringLiteral("3.8"));
+}
+
+// ----------------------------------------------------------------------
+// parsePlot: extracts the OMDb short plot string from a .ratings sidecar.
+// ----------------------------------------------------------------------
+
+void TestMediaInfo::plot_present()
+{
+    // A stored plot blurb is returned verbatim.
+    const QByteArray json = R"({
+        "title":"Example","year":"2020",
+        "plot":"A brief factual summary of the film."
+    })";
+    QCOMPARE(parsePlot(json), QStringLiteral("A brief factual summary of the film."));
+}
+
+void TestMediaInfo::plot_missing()
+{
+    // No "plot" key at all — returns empty string, does not crash.
+    const QByteArray json = R"({"title":"Example","year":"2020","rt":"80%"})";
+    QCOMPARE(parsePlot(json), QString());
+}
+
+void TestMediaInfo::plot_empty()
+{
+    // Empty plot string (thumbnailer writes this when OMDb returns "N/A"
+    // or the plot field wasn't populated) — returns empty, not "N/A".
+    const QByteArray json = R"({"title":"Example","year":"2020","plot":""})";
+    QCOMPARE(parsePlot(json), QString());
+}
+
+void TestMediaInfo::plot_malformed()
+{
+    // Garbage input — empty string, no crash.
+    QCOMPARE(parsePlot(QByteArray()), QString());
+    QCOMPARE(parsePlot(QByteArray("")), QString());
+    QCOMPARE(parsePlot(QByteArray("{}")), QString());
+    QCOMPARE(parsePlot(QByteArray("not json at all")), QString());
+    QCOMPARE(parsePlot(QByteArray("{broken")), QString());
 }
 
 // ----------------------------------------------------------------------

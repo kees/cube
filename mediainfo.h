@@ -34,4 +34,9 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json);
 QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
                                             const QStringList &serviceKeys);
 
+// Extracts the OMDb short-plot string from the same .ratings sidecar.
+// Returns an empty string when the plot field is absent, empty, or the
+// input is unparseable.
+QString parsePlot(const QByteArray &json);
+
 #endif // MEDIAINFO_H

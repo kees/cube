@@ -135,6 +135,15 @@ MainWindow::MainWindow(QWidget *parent) :
     ratingsBar->hide();
     ui->verticalLayout_4->insertWidget(1, ratingsBar);
 
+    // Plot blurb (OMDb short plot). Sits below the ratings bar, above
+    // the metadata table. Word-wraps to fit the column, hides when no
+    // plot is available for the current file.
+    plotLabel = new QLabel(this);
+    plotLabel->setWordWrap(true);
+    plotLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    plotLabel->hide();
+    ui->verticalLayout_4->insertWidget(2, plotLabel);
+
     // Fetch missing rating-service logos asynchronously. Uses Google's
     // public favicon service to grab 32x32 PNGs — runs only when at
     // least one icon file is absent under ~/.cache/playback/icons/, so
@@ -234,6 +243,8 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     metadata->clear();
     currentRatingRows.clear();
     ratingsBar->hide();
+    plotLabel->clear();
+    plotLabel->hide();
 
     QString heading;
 
@@ -610,6 +621,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     ui->grThumbnail->setMinimumSize(width, width / ratio);
     ui->tblMetadata->setMaximumWidth(width);
     ratingsBar->setMaximumWidth(width);
+    plotLabel->setMaximumWidth(width);
 
     // Figure out metadata font size
     int size = ui->lstFiles->font().pointSize();
@@ -617,6 +629,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     if (availableSize.height() / size < 30)
         size /= 2;
     ui->tblMetadata->setFont(QFont(ui->tblMetadata->font().family(), size));
+    plotLabel->setFont(QFont(plotLabel->font().family(), size));
     qDebug() << "metadata font size: " << size;
     rebuildRatingsBar();
 
@@ -733,13 +746,22 @@ void MainWindow::thumbnailDisplay(const QString &thumbnail)
      * metadata table — ratings render as [icon] value pairs equally
      * spaced on a single line, not as table rows. */
     QFile ratings_file(thumbnail + ".ratings");
+    QByteArray ratings_bytes;
     if (ratings_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        currentRatingRows = parseRatings(ratings_file.readAll(), ratingsDisplayOrder);
+        ratings_bytes = ratings_file.readAll();
         ratings_file.close();
-    } else {
-        currentRatingRows.clear();
     }
+    currentRatingRows = parseRatings(ratings_bytes, ratingsDisplayOrder);
     rebuildRatingsBar();
+
+    // OMDb short plot, displayed below the ratings bar.
+    const QString plot = parsePlot(ratings_bytes);
+    if (plot.isEmpty()) {
+        plotLabel->hide();
+    } else {
+        plotLabel->setText(plot);
+        plotLabel->show();
+    }
 
     /* Media info JSON — parsing lives in mediainfo.cpp so it can be
      * unit-tested without dragging in Qt Widgets. */

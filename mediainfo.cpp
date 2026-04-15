@@ -62,6 +62,14 @@ QList<QPair<QString, QString>> parseRatings(const QByteArray &json,
     return rows;
 }
 
+QString parsePlot(const QByteArray &json)
+{
+    QJsonDocument doc = QJsonDocument::fromJson(json);
+    if (!doc.isObject())
+        return QString();
+    return doc.object().value("plot").toString();
+}
+
 QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 {
     QList<QPair<QString, QString>> rows;

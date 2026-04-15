@@ -123,7 +123,7 @@ do_ratings()
 	local OMDB_KEY
 	OMDB_KEY=$(grep ^omdb_apikey= ~/.config/Outflux/playback-walker.conf 2>/dev/null | cut -d= -f2-)
 
-	local rt="" imdb="" metacritic=""
+	local rt="" imdb="" metacritic="" plot=""
 	if [ -n "$OMDB_KEY" ]; then
 		local omdb_response
 		omdb_response=$(curl -s -G "https://www.omdbapi.com/" \
@@ -137,7 +137,12 @@ do_ratings()
 			rt=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Rotten Tomatoes") | .Value // empty')
 			imdb=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Internet Movie Database") | .Value // empty')
 			metacritic=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Metacritic") | .Value // empty')
-			echo "$media: OMDb: RT=$rt IMDb=$imdb Metacritic=$metacritic" >> "$LOG"
+			# OMDb's short plot: 1-3 sentence factual description. "N/A"
+			# is filtered to empty (OMDb returns literal "N/A" when the
+			# field is unavailable).
+			plot=$(echo "$omdb_response" | jq -r '.Plot // empty')
+			[ "$plot" = "N/A" ] && plot=""
+			echo "$media: OMDb: RT=$rt IMDb=$imdb Metacritic=$metacritic plot=${plot:+yes}" >> "$LOG"
 		else
 			echo "$media: OMDb lookup failed: $(echo "$omdb_response" | jq -r '.Error // "unknown"')" >> "$LOG"
 		fi
@@ -198,8 +203,8 @@ do_ratings()
 		fi
 	fi
 
-	# Only write the .ratings file if we got at least one rating.
-	if [ -n "$rt" ] || [ -n "$imdb" ] || [ -n "$metacritic" ] || [ -n "$letterboxd" ]; then
+	# Only write the .ratings file if we got at least one rating or plot.
+	if [ -n "$rt" ] || [ -n "$imdb" ] || [ -n "$metacritic" ] || [ -n "$letterboxd" ] || [ -n "$plot" ]; then
 		jq -n \
 			--arg title "$title" \
 			--arg year "$year" \
@@ -207,7 +212,8 @@ do_ratings()
 			--arg imdb "$imdb" \
 			--arg metacritic "$metacritic" \
 			--arg letterboxd "$letterboxd" \
-			'{title: $title, year: $year, rt: $rt, imdb: $imdb, metacritic: $metacritic, letterboxd: $letterboxd}' \
+			--arg plot "$plot" \
+			'{title: $title, year: $year, rt: $rt, imdb: $imdb, metacritic: $metacritic, letterboxd: $letterboxd, plot: $plot}' \
 			> "$NEW".ratings
 		mv "$NEW".ratings "$RATINGS"
 	else
