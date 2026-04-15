@@ -1,311 +1,407 @@
-#!/bin/bash
-CACHE=~/.cache/playback/thumbnails
-EXT=png
-LOG=~/.cache/playback/thumbnailer.log
+#!/usr/bin/env python3
+"""cube's thumbnailer: extract a representative frame, dump mediainfo
+JSON, and — for /Movies/ files named "Title (YYYY).ext" — fetch ratings
+and a plot blurb from OMDb and Letterboxd. Prints the cached thumbnail
+path to stdout.
 
-# Resolve this script's own path so cached thumbnails can be invalidated
-# when the thumbnailer logic changes (e.g. the anamorphic filter fix).
-# Handle all three invocation styles: absolute path, relative path, and
-# bare name found on PATH. Falls back to $0 if resolution fails so the
-# mtime test below simply never fires stale-detection.
-SELF=$(command -v "$0" 2>/dev/null)
-[ -n "$SELF" ] && [ -e "$SELF" ] || SELF="$0"
+Cache layout under ~/.cache/playback/thumbnails/<aa>/<sha256>.{png,png.json,png.ratings},
+keyed on the realpath of the media file. Each sidecar is mtime-checked
+against the media and against this script, so updating the thumbnailer
+logic (e.g. the anamorphic filter fix) automatically invalidates old
+cached output on next run.
 
-MEDIA=$(realpath "$@")
+External tools needed: mpv (frame extraction), ImageMagick `convert`
+(stddev check + fallback black placeholder), mediainfo (JSON dump).
+"""
 
-HASH=$(echo -n "$MEDIA" | sha256sum | awk '{print $1}')
-INDEX=$(echo "$HASH" | cut -c-2)
-mkdir -p "$CACHE"/$INDEX
-NEW="$CACHE"/$INDEX/$HASH.new.$EXT
-THUMB="$CACHE"/$INDEX/$HASH.$EXT
-JSON="$THUMB.json"
-RATINGS="$THUMB.ratings"
-BASE_EXT=$(echo "$MEDIA" | awk -F. '{print $NF}')
-if [ "$BASE_EXT" == "$MEDIA" ]; then
-	# No extension, just give up.
-	echo "$MEDIA: giving up, no extension" >> "$LOG"
-	exit 1
-fi
-# TODO: create this safely
-LINK="/tmp/thumbnailer-$$".$BASE_EXT
-
-thumb_frame()
-{
-	local frame="$1"
-	# Anamorphic-safe scale: first multiply the coded width by SAR (sample
-	# aspect ratio) to convert to square-pixel display dimensions, then
-	# scale to the 720-tall thumbnail target. Old AVI encodings (MPEG-4
-	# ASP, MPEG-2, DV) often use non-square pixels; without the first
-	# pass, a 720x480 NTSC 16:9 source would thumbnail to 1080x720 instead
-	# of 1280x720 and look horizontally squashed. For square-pixel
-	# sources, sar=1 and the first scale is a no-op.
-	mpv "$LINK" --quiet --no-audio --sid=no --hwdec=no "--vf=lavfi=[scale=iw*sar:ih,scale=-1:720]" --start="$frame" --frames=1 --o="$NEW" >> "$LOG" 2>&1
-}
-
-do_thumbnail()
-{
-	ln -sf "$@" "$LINK"
-	local frame
-
-	# Scan for a few different frame positions
-	for frame in 0 60 30 1 2 4 8 16; do
-		if ! thumb_frame $frame ; then
-			# Failed to get a frame -- try again
-			continue
-		fi
-
-		# Check for a boring thumbnail (i.e. mostly the same color).
-		# Standard deviation of pixel intensities (0..1) is a cleaner
-		# signal than counting distinct colors — a near-black frame can
-		# still have 8 "unique" values that differ by one per channel,
-		# which the old -colors/-unique-colors check happily accepted.
-		# Real content frames sit around 0.1+; studio logos/title cards
-		# around 0.02-0.04; uniform frames near 0. awk does the float
-		# compare since bash's [ can't.
-		STDDEV=$(convert "$NEW" -format "%[fx:standard_deviation]" info:)
-		if awk -v s="$STDDEV" 'BEGIN { exit !(s > 0.07) }' ; then
-			break
-		fi
-	done
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
 
 
-	# Take whatever we had at the last attempt, if possible.
-	if [ -e "$NEW" ]; then
-		echo "$@: using frame $frame" >> "$LOG"
-	else
-		echo "$@: gave up" >> "$LOG"
-		# Failed to find anything. Don't try again in the future.
-		convert -size 1280x720 xc:black "$NEW"
-	fi
-	mv "$NEW" "$THUMB"
-	rm -f "$LINK"
-}
+HOME = Path.home()
+CACHE = HOME / ".cache" / "playback" / "thumbnails"
+LOG_PATH = HOME / ".cache" / "playback" / "thumbnailer.log"
+CONFIG = HOME / ".config" / "Outflux" / "playback-walker.conf"
 
-do_json()
-{
-	ln -sf "$@" "$LINK"
-	if mediainfo --Output=JSON "$LINK" > "$NEW".json 2>> "$LOG" ; then
-		mv "$NEW".json "$JSON"
-	fi
-	rm -f "$LINK"
-}
+# Scan order for frame selection. Frame 0 is tried first since most
+# films have a representative opening shot; the rest are fallback
+# positions used when the earlier pick is too uniform to be useful.
+FRAMES = [0, 60, 30, 1, 2, 4, 8, 16]
 
-do_ratings()
-{
-	local media="$1"
+# Pixel-intensity standard deviation threshold (0..1). A uniformly
+# coloured frame scores ~0, studio logos / title cards 0.02–0.04,
+# real content frames 0.1+. Chosen to reject black frames and simple
+# logos while keeping genuinely dim scenes.
+STDDEV_THRESHOLD = 0.07
 
-	# Only look up ratings for files under a /Movies/ directory.
-	echo "$media" | grep -q '/Movies/' || return 0
+HTTP_TIMEOUT = 15
+USER_AGENT = "Mozilla/5.0"
 
-	# Require curl + jq; skip silently if missing.
-	command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
+OMDB_URL = "https://www.omdbapi.com/"
+LETTERBOXD_URL = "https://letterboxd.com/film/{slug}/"
 
-	# Extract title and year from a "Title Name (YYYY)" pattern. Try the
-	# filename (sans extension) first, then the parent directory name.
-	local name_noext
-	name_noext=$(basename "$media")
-	name_noext="${name_noext%.*}"
 
-	local title="" year=""
-	if [[ "$name_noext" =~ ^(.+)\ \(([0-9]{4})\)$ ]]; then
-		title="${BASH_REMATCH[1]}"
-		year="${BASH_REMATCH[2]}"
-	else
-		local dirname
-		dirname=$(basename "$(dirname "$media")")
-		if [[ "$dirname" =~ ^(.+)\ \(([0-9]{4})\)$ ]]; then
-			title="${BASH_REMATCH[1]}"
-			year="${BASH_REMATCH[2]}"
-		else
-			echo "$media: no 'Title (Year)' pattern found, skipping ratings" >> "$LOG"
-			return 0
-		fi
-	fi
+def log(msg):
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG_PATH, "a") as f:
+        f.write(msg + "\n")
 
-	echo "$media: looking up ratings for '$title' ($year)" >> "$LOG"
 
-	# --- OMDb (Rotten Tomatoes + IMDb + Metacritic) ---
-	local OMDB_KEY
-	OMDB_KEY=$(grep ^omdb_apikey= ~/.config/Outflux/playback-walker.conf 2>/dev/null | cut -d= -f2-)
+def is_stale(target, *sources):
+    """True if `target` doesn't exist or any `source` is newer than it."""
+    if not target.exists():
+        return True
+    tm = target.stat().st_mtime
+    return any(s and os.path.exists(s) and os.path.getmtime(s) > tm
+               for s in sources)
 
-	# Build candidate query titles, shared between OMDb search and
-	# Letterboxd slugging below. Letterboxd slugs and OMDb's fuzzy
-	# matcher both benefit from falling back to shorter variants —
-	# e.g. "Terminator 2: Judgement Day" (British spelling in the
-	# filename) misses OMDb entirely, but "Terminator 2" surfaces the
-	# real entry. Ordered full→short so the most specific query wins.
-	local -a candidate_titles=("$title")
-	local shortened
-	shortened=$(echo "$title" | sed 's/ - .*//')
-	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
-	shortened=$(echo "$title" | sed 's/:.*//')
-	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
 
-	local rt="" imdb="" metacritic="" plot="" omdb_title=""
-	if [ -n "$OMDB_KEY" ]; then
-		# Use the search endpoint (s=) rather than title lookup (t=)
-		# so we can filter results ourselves. OMDb's t= does fuzzy
-		# matching server-side and returns stub entries like "Episode
-		# 6 - Terminator 2: Judgement Day (1991)" for a "Terminator 2"
-		# query — no way to override that from the client. s= returns
-		# a list of candidates we can reject by title-prefix match.
-		local best_id cand_lc search_response search_ok match
-		for scand in "${candidate_titles[@]}"; do
-			search_response=$(curl -s -G "https://www.omdbapi.com/" \
-				--data-urlencode "s=$scand" \
-				--data-urlencode "y=$year" \
-				--data-urlencode "type=movie" \
-				--data-urlencode "apikey=$OMDB_KEY")
+def normalize(s):
+    """Lowercase + transliterate accents to ASCII + strip non-alphanumeric.
+    Used for fuzzy OMDb title-prefix matching so punctuation drift
+    (colons, apostrophes, hyphens) and spelling variants can still
+    match — e.g. "My Little Pony The Movie" prefix-matches "My Little
+    Pony: The Movie" because both collapse to "mylittleponythemovie"."""
+    ascii_s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", ascii_s.lower())
 
-			search_ok=$(echo "$search_response" | jq -r '.Response // "False"')
-			if [ "$search_ok" != "True" ]; then
-				echo "$media: OMDb search '$scand' failed: $(echo "$search_response" | jq -r '.Error // "unknown"')" >> "$LOG"
-				continue
-			fi
 
-			# Pick the first result whose Title (normalized) starts
-			# with the normalized candidate. Normalization:
-			# lowercase, transliterate accents, strip everything
-			# non-alphanumeric. Rejects stubs like "Episode 6 -
-			# ..." because "episode6..." doesn't start with
-			# "terminator2". Forgiving of punctuation drift
-			# between filename and OMDb entry (colons, apostrophes,
-			# hyphens) — e.g. "My Little Pony The Movie" (filename)
-			# matches "My Little Pony: The Movie" (OMDb) because
-			# both normalize to "mylittleponythemovie".
-			cand_norm=$(echo "$scand" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
-			match=$(echo "$search_response" | jq -r --arg t "$cand_norm" \
-				'.Search // [] | map(select(.Title | ascii_downcase | gsub("[^a-z0-9]"; "") | startswith($t))) | .[0] // empty')
-			if [ -n "$match" ]; then
-				best_id=$(echo "$match" | jq -r '.imdbID')
-				omdb_title=$(echo "$match" | jq -r '.Title')
-				echo "$media: OMDb search '$scand' matched '$omdb_title' ($best_id)" >> "$LOG"
-				break
-			fi
-			echo "$media: OMDb search '$scand' returned no title-prefix match" >> "$LOG"
-		done
+def slugify(s):
+    """Letterboxd URL slug: lowercase, transliterate accents, strip
+    apostrophes (Letterboxd drops them rather than hyphenating, so
+    "The Devil's Backbone" → "the-devils-backbone"), then squash
+    every run of non-alphanumerics to a single hyphen."""
+    ascii_s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    stripped = ascii_s.lower().replace("'", "")
+    hyphenated = re.sub(r"[^a-z0-9]+", "-", stripped)
+    return hyphenated.strip("-")
 
-		# Fetch full entry by IMDb ID for ratings + plot.
-		if [ -n "$best_id" ]; then
-			local omdb_response
-			omdb_response=$(curl -s -G "https://www.omdbapi.com/" \
-				--data-urlencode "i=$best_id" \
-				--data-urlencode "plot=short" \
-				--data-urlencode "apikey=$OMDB_KEY")
 
-			if [ "$(echo "$omdb_response" | jq -r '.Response // "False"')" = "True" ]; then
-				rt=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Rotten Tomatoes") | .Value // empty')
-				imdb=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Internet Movie Database") | .Value // empty')
-				metacritic=$(echo "$omdb_response" | jq -r '(.Ratings // [])[] | select(.Source == "Metacritic") | .Value // empty')
-				# OMDb's short plot: 1-3 sentence factual description. "N/A"
-				# is filtered to empty (OMDb returns literal "N/A" when the
-				# field is unavailable).
-				plot=$(echo "$omdb_response" | jq -r '.Plot // empty')
-				[ "$plot" = "N/A" ] && plot=""
-				echo "$media: OMDb: RT=$rt IMDb=$imdb Metacritic=$metacritic plot=${plot:+yes}" >> "$LOG"
-			else
-				echo "$media: OMDb i=$best_id fetch failed: $(echo "$omdb_response" | jq -r '.Error // "unknown"')" >> "$LOG"
-			fi
-		fi
-	else
-		echo "$media: no omdb_apikey configured, skipping OMDb" >> "$LOG"
-	fi
+def read_omdb_key():
+    if not CONFIG.exists():
+        return None
+    for line in CONFIG.read_text().splitlines():
+        if line.startswith("omdb_apikey="):
+            return line.split("=", 1)[1].strip() or None
+    return None
 
-	# --- Letterboxd (web scrape via og:title year check + JSON-LD rating) ---
-	local letterboxd=""
 
-	# Prepend OMDb's authoritative title (from the search match above)
-	# to the candidate list when available — it's the most likely to
-	# match Letterboxd's canonical slug. The rest of the list was
-	# built before the OMDb lookup above and is reused here: full
-	# title, then shortened-at-" - ", then shortened-at-":".
-	if [ -n "$omdb_title" ] && [ "$omdb_title" != "${candidate_titles[0]}" ]; then
-		candidate_titles=("$omdb_title" "${candidate_titles[@]}")
-	fi
+def http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+        return json.loads(r.read().decode())
 
-	local tried_slugs=""
-	local candidate slug lb_url lb_page lb_num
-	for candidate in "${candidate_titles[@]}"; do
-		# Build slug from candidate title. Transliterate accented
-		# characters (é→e, ü→u, etc.) so "Amélie" produces "amelie" not
-		# "am-lie". iconv's //TRANSLIT also normalises Unicode right-
-		# single-quote (U+2019) to ASCII apostrophe. Apostrophes are
-		# stripped before the general punctuation→hyphen pass —
-		# Letterboxd drops them entirely rather than converting to a
-		# hyphen, so "The Devil's Backbone" → "the-devils-backbone"
-		# (not "the-devil-s-backbone", which 404s).
-		slug=$(echo "$candidate" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
-			| tr '[:upper:]' '[:lower:]' \
-			| sed -e "s/'//g" -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
-		[ -n "$slug" ] || continue
-		tried_slugs="$tried_slugs $slug"
 
-		# For each candidate slug, try the bare form first then the
-		# year-suffixed form (Letterboxd disambiguates title
-		# collisions with a -YYYY suffix, e.g. /film/the-matrix-2025/).
-		for lb_url in \
-			"https://letterboxd.com/film/$slug/" \
-			"https://letterboxd.com/film/$slug-$year/"; do
+def http_text(url):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+        return r.read().decode("utf-8", errors="replace")
 
-			lb_page=$(curl -s -L --fail "$lb_url" 2>/dev/null) || continue
-			[ -n "$lb_page" ] || continue
 
-			# Verify the year matches via the og:title meta tag:
-			#   <meta property="og:title" content="The Matrix (1999)">
-			echo "$lb_page" | grep -q 'property="og:title".*'"($year)" || continue
+def run_to_log(cmd):
+    """Run `cmd` with stdout+stderr appended to the log file."""
+    with open(LOG_PATH, "a") as logf:
+        return subprocess.run(cmd, stdout=logf, stderr=logf)
 
-			# Extract the rating from the JSON-LD aggregateRating
-			# block. More stable than HTML display elements since
-			# the schema.org markup is part of their SEO and rarely
-			# changes: "ratingValue":3.83
-			lb_num=$(echo "$lb_page" | grep -o '"ratingValue":[0-9.]*' \
-				| head -1 | sed 's/"ratingValue"://')
-			if [ -n "$lb_num" ]; then
-				letterboxd="$(printf '%g' "$lb_num")/5"
-				echo "$media: Letterboxd ($lb_url): $letterboxd" >> "$LOG"
-			fi
-			break 2
-		done
-	done
 
-	if [ -z "$letterboxd" ]; then
-		echo "$media: Letterboxd lookup failed for slugs:$tried_slugs" >> "$LOG"
-	fi
+def mpv_frame(link, new_path, frame):
+    # Anamorphic-safe scale: multiply coded width by SAR first to
+    # convert to square-pixel display dimensions, then scale to the
+    # 720-tall thumbnail target. Without the first pass a 720x480 NTSC
+    # 16:9 source would thumbnail to 1080x720 instead of 1280x720.
+    return run_to_log([
+        "mpv", str(link), "--quiet", "--no-audio", "--sid=no", "--hwdec=no",
+        "--vf=lavfi=[scale=iw*sar:ih,scale=-1:720]",
+        f"--start={frame}", "--frames=1", f"--o={new_path}",
+    ]).returncode == 0
 
-	# Only write the .ratings file if we got at least one rating or plot.
-	if [ -n "$rt" ] || [ -n "$imdb" ] || [ -n "$metacritic" ] || [ -n "$letterboxd" ] || [ -n "$plot" ]; then
-		jq -n \
-			--arg title "$title" \
-			--arg year "$year" \
-			--arg rt "$rt" \
-			--arg imdb "$imdb" \
-			--arg metacritic "$metacritic" \
-			--arg letterboxd "$letterboxd" \
-			--arg plot "$plot" \
-			'{title: $title, year: $year, rt: $rt, imdb: $imdb, metacritic: $metacritic, letterboxd: $letterboxd, plot: $plot}' \
-			> "$NEW".ratings
-		mv "$NEW".ratings "$RATINGS"
-	else
-		echo "$media: no ratings retrieved, skipping .ratings file" >> "$LOG"
-	fi
-}
 
-if [ ! -e "$THUMB" ] || [ "$MEDIA" -nt "$THUMB" ] || [ "$SELF" -nt "$THUMB" ]; then
-	do_thumbnail "$MEDIA"
-else
-	echo "$MEDIA: using thumb $THUMB" >> "$LOG"
-fi
+def stddev(path):
+    try:
+        r = subprocess.run(
+            ["convert", str(path), "-format", "%[fx:standard_deviation]", "info:"],
+            capture_output=True, text=True, check=True,
+        )
+        return float(r.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError):
+        return None
 
-if [ ! -e "$JSON" ] || [ "$MEDIA" -nt "$JSON" ] || [ "$SELF" -nt "$JSON" ]; then
-	do_json "$MEDIA"
-else
-	echo "$MEDIA: using json $JSON" >> "$LOG"
-fi
 
-if [ ! -e "$RATINGS" ] || [ "$MEDIA" -nt "$RATINGS" ] || [ "$SELF" -nt "$RATINGS" ]; then
-	do_ratings "$MEDIA"
-else
-	echo "$MEDIA: using ratings $RATINGS" >> "$LOG"
-fi
+def with_link(target, link):
+    """Context-manager-ish helper: create a symlink to `target` at
+    `link`, yield, then always remove the symlink on exit."""
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(target)
 
-echo "$THUMB"
+
+def drop_link(link):
+    try:
+        link.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def do_thumbnail(media, new_path, thumb_path, link):
+    with_link(media, link)
+    try:
+        last_frame = None
+        for frame in FRAMES:
+            if not mpv_frame(link, new_path, frame):
+                continue
+            last_frame = frame
+            sd = stddev(new_path)
+            if sd is not None and sd > STDDEV_THRESHOLD:
+                break
+
+        if new_path.exists():
+            log(f"{media}: using frame {last_frame}")
+        else:
+            log(f"{media}: gave up")
+            # Couldn't extract any frame — write a black placeholder so
+            # future runs don't retry forever.
+            subprocess.run(
+                ["convert", "-size", "1280x720", "xc:black", str(new_path)],
+                check=False,
+            )
+        new_path.replace(thumb_path)
+    finally:
+        drop_link(link)
+
+
+def do_json(media, new_path, json_path, link):
+    with_link(media, link)
+    try:
+        new_json = Path(f"{new_path}.json")
+        with open(LOG_PATH, "a") as logf, open(new_json, "wb") as out:
+            r = subprocess.run(["mediainfo", "--Output=JSON", str(link)],
+                               stdout=out, stderr=logf)
+        if r.returncode == 0:
+            new_json.replace(json_path)
+        else:
+            drop_link(new_json)
+    finally:
+        drop_link(link)
+
+
+TITLE_YEAR_RE = re.compile(r"^(.+) \((\d{4})\)$")
+
+
+def parse_title_year(media):
+    """Extract ("Title", "YYYY") from filename sans extension, falling
+    back to parent directory name."""
+    m = TITLE_YEAR_RE.match(Path(media).stem)
+    if m:
+        return m.group(1), m.group(2)
+    m = TITLE_YEAR_RE.match(Path(media).parent.name)
+    if m:
+        return m.group(1), m.group(2)
+    return None, None
+
+
+def omdb_call(params):
+    """Return the parsed JSON response, or a synthetic Response=False
+    dict when the request fails (so callers can branch uniformly on
+    .Response)."""
+    try:
+        return http_json(OMDB_URL + "?" + urllib.parse.urlencode(params))
+    except Exception as e:
+        return {"Response": "False", "Error": str(e)}
+
+
+def fetch_omdb(media, key, candidates, year):
+    """Returns (rt, imdb, metacritic, plot, authoritative_title).
+    All empty strings if nothing was found."""
+    if not key:
+        log(f"{media}: no omdb_apikey configured, skipping OMDb")
+        return "", "", "", "", ""
+
+    # Phase 1: find the right IMDb entry via search. OMDb's title
+    # lookup (t=) does server-side fuzzy matching that sometimes
+    # returns review-show episode stubs like "Episode 6 - Terminator
+    # 2..." — search (s=) lets us filter client-side by title-prefix.
+    best_id = ""
+    omdb_title = ""
+    for scand in candidates:
+        r = omdb_call({"s": scand, "y": year, "type": "movie", "apikey": key})
+        if r.get("Response") != "True":
+            log(f"{media}: OMDb search '{scand}' failed: "
+                f"{r.get('Error', 'unknown')}")
+            continue
+        cand_norm = normalize(scand)
+        hit = next(
+            (res for res in r.get("Search", [])
+             if normalize(res.get("Title", "")).startswith(cand_norm)),
+            None,
+        )
+        if hit:
+            best_id = hit.get("imdbID", "")
+            omdb_title = hit.get("Title", "")
+            log(f"{media}: OMDb search '{scand}' matched '{omdb_title}' ({best_id})")
+            break
+        log(f"{media}: OMDb search '{scand}' returned no title-prefix match")
+
+    if not best_id:
+        return "", "", "", "", omdb_title
+
+    # Phase 2: fetch full entry (ratings array + plot) by IMDb ID.
+    data = omdb_call({"i": best_id, "plot": "short", "apikey": key})
+    if data.get("Response") != "True":
+        log(f"{media}: OMDb i={best_id} fetch failed: "
+            f"{data.get('Error', 'unknown')}")
+        return "", "", "", "", omdb_title
+
+    ratings = {r.get("Source", ""): r.get("Value", "")
+               for r in (data.get("Ratings") or [])}
+    rt = ratings.get("Rotten Tomatoes", "")
+    imdb = ratings.get("Internet Movie Database", "")
+    metacritic = ratings.get("Metacritic", "")
+    plot = data.get("Plot") or ""
+    if plot == "N/A":
+        plot = ""
+    log(f"{media}: OMDb: RT={rt} IMDb={imdb} Metacritic={metacritic} "
+        f"plot={'yes' if plot else ''}")
+    return rt, imdb, metacritic, plot, omdb_title
+
+
+def fetch_letterboxd(media, candidates, year):
+    """Scrape Letterboxd's JSON-LD rating for the first candidate slug
+    whose page exists and verifies the expected year."""
+    tried = []
+    for candidate in candidates:
+        slug = slugify(candidate)
+        if not slug:
+            continue
+        tried.append(slug)
+        # Try the bare slug first, then the year-suffixed variant —
+        # Letterboxd disambiguates title collisions with -YYYY
+        # (e.g. /film/the-matrix-2025/).
+        for url in (f"https://letterboxd.com/film/{slug}/",
+                    f"https://letterboxd.com/film/{slug}-{year}/"):
+            try:
+                page = http_text(url)
+            except Exception:
+                continue
+            if not page:
+                continue
+            # Verify the year via the og:title meta tag — e.g.
+            # <meta property="og:title" content="The Matrix (1999)">.
+            if not re.search(rf'property="og:title".*\({re.escape(year)}\)', page):
+                continue
+            # Rating comes from the JSON-LD aggregateRating block
+            # (more stable than HTML display elements; the schema.org
+            # markup is part of their SEO and rarely changes).
+            m = re.search(r'"ratingValue":([0-9.]+)', page)
+            if not m:
+                return ""
+            # printf '%g' behavior: strip trailing zeros, no scientific
+            # notation for the 0..5 range we care about.
+            letterboxd = f"{float(m.group(1)):g}/5"
+            log(f"{media}: Letterboxd ({url}): {letterboxd}")
+            return letterboxd
+    log(f"{media}: Letterboxd lookup failed for slugs: " + " ".join(tried))
+    return ""
+
+
+def do_ratings(media, new_path, ratings_path):
+    # Only look up ratings for files under a /Movies/ directory.
+    if "/Movies/" not in media:
+        return
+    title, year = parse_title_year(media)
+    if not title:
+        log(f"{media}: no 'Title (Year)' pattern found, skipping ratings")
+        return
+
+    log(f"{media}: looking up ratings for '{title}' ({year})")
+
+    # Candidate title variants, shared by OMDb search and Letterboxd
+    # slugging: full title, then sub-title-stripped at " - ", then
+    # at ":". Both services benefit from the fallbacks — OMDb's fuzzy
+    # matcher misses British-vs-American spelling variants ("Judgement
+    # Day" vs "Judgment Day"), and Letterboxd's canonical slugs
+    # sometimes use just the main title.
+    candidates = [title]
+    for trimmed in (re.sub(r" - .*", "", title), re.sub(r":.*", "", title)):
+        if trimmed != title and trimmed not in candidates:
+            candidates.append(trimmed)
+
+    key = read_omdb_key()
+    rt, imdb, metacritic, plot, omdb_title = fetch_omdb(media, key, candidates, year)
+
+    # Prepend OMDb's authoritative title as Letterboxd's first
+    # candidate when available — it's the most likely to match
+    # Letterboxd's canonical slug (e.g. "Terminator 2: Judgment Day"
+    # → terminator-2-judgment-day).
+    lb_candidates = candidates
+    if omdb_title and omdb_title != candidates[0]:
+        lb_candidates = [omdb_title] + candidates
+
+    letterboxd = fetch_letterboxd(media, lb_candidates, year)
+
+    if not any([rt, imdb, metacritic, letterboxd, plot]):
+        log(f"{media}: no ratings retrieved, skipping .ratings file")
+        return
+
+    new_ratings = Path(f"{new_path}.ratings")
+    with open(new_ratings, "w") as f:
+        json.dump({
+            "title": title, "year": year,
+            "rt": rt, "imdb": imdb, "metacritic": metacritic,
+            "letterboxd": letterboxd, "plot": plot,
+        }, f, indent=2)
+    new_ratings.replace(ratings_path)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: thumbnailer <media>", file=sys.stderr)
+        sys.exit(1)
+
+    media = os.path.realpath(sys.argv[1])
+
+    # Bail on paths with no dot at all — we use the extension for the
+    # /tmp symlink name so mpv can detect the container format.
+    if "." not in media:
+        log(f"{media}: giving up, no extension")
+        sys.exit(1)
+    base_ext = media.rsplit(".", 1)[-1]
+
+    h = hashlib.sha256(media.encode()).hexdigest()
+    index = h[:2]
+    (CACHE / index).mkdir(parents=True, exist_ok=True)
+    new_path = CACHE / index / f"{h}.new"
+    thumb    = CACHE / index / f"{h}.png"
+    json_sidecar = Path(f"{thumb}.json")
+    ratings      = Path(f"{thumb}.ratings")
+    link = Path(f"/tmp/thumbnailer-{os.getpid()}.{base_ext}")
+    self_path = os.path.abspath(__file__)
+
+    if is_stale(thumb, media, self_path):
+        do_thumbnail(media, new_path, thumb, link)
+    else:
+        log(f"{media}: using thumb {thumb}")
+
+    if is_stale(json_sidecar, media, self_path):
+        do_json(media, new_path, json_sidecar, link)
+    else:
+        log(f"{media}: using json {json_sidecar}")
+
+    if is_stale(ratings, media, self_path):
+        do_ratings(media, new_path, ratings)
+    else:
+        log(f"{media}: using ratings {ratings}")
+
+    print(thumb)
+
+
+if __name__ == "__main__":
+    main()
