@@ -120,6 +120,10 @@ def mpv_frame(link, new_path, frame):
     return run_to_log([
         "mpv", str(link), "--quiet", "--no-audio", "--sid=no", "--hwdec=no",
         "--vf=lavfi=[scale=iw*sar:ih,scale=-1:720]",
+        # update=1 silences ffmpeg's image2 muxer warning about
+        # missing %d patterns — we're deliberately writing a single
+        # image, not a sequence.
+        "--ofopts-add=update=1",
         f"--start={frame}", "--frames=1", f"--o={new_path}",
     ]).returncode == 0
 
