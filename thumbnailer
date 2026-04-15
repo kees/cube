@@ -128,44 +128,59 @@ do_ratings()
 	local OMDB_KEY
 	OMDB_KEY=$(grep ^omdb_apikey= ~/.config/Outflux/playback-walker.conf 2>/dev/null | cut -d= -f2-)
 
+	# Build candidate query titles, shared between OMDb search and
+	# Letterboxd slugging below. Letterboxd slugs and OMDb's fuzzy
+	# matcher both benefit from falling back to shorter variants —
+	# e.g. "Terminator 2: Judgement Day" (British spelling in the
+	# filename) misses OMDb entirely, but "Terminator 2" surfaces the
+	# real entry. Ordered full→short so the most specific query wins.
+	local -a candidate_titles=("$title")
+	local shortened
+	shortened=$(echo "$title" | sed 's/ - .*//')
+	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
+	shortened=$(echo "$title" | sed 's/:.*//')
+	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
+
 	local rt="" imdb="" metacritic="" plot="" omdb_title=""
 	if [ -n "$OMDB_KEY" ]; then
 		# Use the search endpoint (s=) rather than title lookup (t=)
 		# so we can filter results ourselves. OMDb's t= does fuzzy
-		# matching server-side and will return stub entries like
-		# "Episode 6 - Terminator 2: Judgement Day (1991)" (a review-
-		# show episode classified as Type=movie) for a "Terminator 2"
+		# matching server-side and returns stub entries like "Episode
+		# 6 - Terminator 2: Judgement Day (1991)" for a "Terminator 2"
 		# query — no way to override that from the client. s= returns
-		# a list of candidates we can reject.
-		local search_response
-		search_response=$(curl -s -G "https://www.omdbapi.com/" \
-			--data-urlencode "s=$title" \
-			--data-urlencode "y=$year" \
-			--data-urlencode "type=movie" \
-			--data-urlencode "apikey=$OMDB_KEY")
+		# a list of candidates we can reject by title-prefix match.
+		local best_id cand_lc search_response search_ok match
+		for scand in "${candidate_titles[@]}"; do
+			search_response=$(curl -s -G "https://www.omdbapi.com/" \
+				--data-urlencode "s=$scand" \
+				--data-urlencode "y=$year" \
+				--data-urlencode "type=movie" \
+				--data-urlencode "apikey=$OMDB_KEY")
 
-		local search_ok best_id
-		search_ok=$(echo "$search_response" | jq -r '.Response // "False"')
-		if [ "$search_ok" = "True" ]; then
+			search_ok=$(echo "$search_response" | jq -r '.Response // "False"')
+			if [ "$search_ok" != "True" ]; then
+				echo "$media: OMDb search '$scand' failed: $(echo "$search_response" | jq -r '.Error // "unknown"')" >> "$LOG"
+				continue
+			fi
+
 			# Pick the first result whose Title (case-insensitive,
-			# transliterated) starts with our query title. Rejects
-			# "Episode 6 - ..." stubs because they don't start with
-			# the query. Falls through empty if nothing matches.
-			local title_lc
-			title_lc=$(echo "$title" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr '[:upper:]' '[:lower:]')
-			local match
-			match=$(echo "$search_response" | jq -r --arg t "$title_lc" \
+			# transliterated) starts with this candidate. Rejects
+			# stubs like "Episode 6 - ..." because they don't start
+			# with the query. Uses the candidate (not the original
+			# title) so shortened queries still prefix-match the
+			# real entry (e.g. "terminator 2" prefixes "Terminator
+			# 2: Judgment Day").
+			cand_lc=$(echo "$scand" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr '[:upper:]' '[:lower:]')
+			match=$(echo "$search_response" | jq -r --arg t "$cand_lc" \
 				'.Search // [] | map(select(.Title | ascii_downcase | startswith($t))) | .[0] // empty')
 			if [ -n "$match" ]; then
 				best_id=$(echo "$match" | jq -r '.imdbID')
 				omdb_title=$(echo "$match" | jq -r '.Title')
-				echo "$media: OMDb search matched '$omdb_title' ($best_id)" >> "$LOG"
-			else
-				echo "$media: OMDb search returned no title-prefix match" >> "$LOG"
+				echo "$media: OMDb search '$scand' matched '$omdb_title' ($best_id)" >> "$LOG"
+				break
 			fi
-		else
-			echo "$media: OMDb search failed: $(echo "$search_response" | jq -r '.Error // "unknown"')" >> "$LOG"
-		fi
+			echo "$media: OMDb search '$scand' returned no title-prefix match" >> "$LOG"
+		done
 
 		# Fetch full entry by IMDb ID for ratings + plot.
 		if [ -n "$best_id" ]; then
@@ -196,21 +211,14 @@ do_ratings()
 	# --- Letterboxd (web scrape via og:title year check + JSON-LD rating) ---
 	local letterboxd=""
 
-	# Build a list of candidate titles to try. Letterboxd slugs
-	# sometimes use the full title ("terminator-2-judgment-day") and
-	# sometimes just the main part ("terminator-2"), so we try several
-	# variants. OMDb's authoritative title (from the search match
-	# above) is tried first when available — it's the most likely to
-	# match Letterboxd's canonical slug. Then the filename's title,
-	# then progressively shorter variants of that.
-	local -a candidate_titles=()
-	[ -n "$omdb_title" ] && [ "$omdb_title" != "$title" ] && candidate_titles+=("$omdb_title")
-	candidate_titles+=("$title")
-	local shortened
-	shortened=$(echo "$title" | sed 's/ - .*//')
-	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
-	shortened=$(echo "$title" | sed 's/:.*//')
-	[ "$shortened" != "$title" ] && candidate_titles+=("$shortened")
+	# Prepend OMDb's authoritative title (from the search match above)
+	# to the candidate list when available — it's the most likely to
+	# match Letterboxd's canonical slug. The rest of the list was
+	# built before the OMDb lookup above and is reused here: full
+	# title, then shortened-at-" - ", then shortened-at-":".
+	if [ -n "$omdb_title" ] && [ "$omdb_title" != "${candidate_titles[0]}" ]; then
+		candidate_titles=("$omdb_title" "${candidate_titles[@]}")
+	fi
 
 	local tried_slugs=""
 	local candidate slug lb_url lb_page lb_num
