@@ -913,8 +913,9 @@ void TestMediaInfo::dedup_duplicateRowsCollapsed()
     ]}})";
     const Rows rows = parseMediaInfo(json);
     // Expected: 1 AVC + 1 Size + 1 FLAC (duplicate skipped) + 1 AC-3 +
-    // 1 English SDH (duplicate skipped) + 1 French = 6 rows.
-    QCOMPARE(rows.size(), 6);
+    // 1 merged Subtitles row ("English (SDH), French" — duplicate SDH
+    // entry collapsed) = 5 rows.
+    QCOMPARE(rows.size(), 5);
     QCOMPARE(rows[0].first, QStringLiteral("AVC "));
     QCOMPARE(rows[1].first, QStringLiteral("Full HD "));
     QCOMPARE(rows[2], Row(QStringLiteral("FLAC (English) "),
@@ -922,9 +923,7 @@ void TestMediaInfo::dedup_duplicateRowsCollapsed()
     QCOMPARE(rows[3], Row(QStringLiteral("AC-3 (English) "),
                           QStringLiteral("Front: L R")));
     QCOMPARE(rows[4], Row(QStringLiteral("Subtitles "),
-                          QStringLiteral("English (SDH)")));
-    QCOMPARE(rows[5], Row(QStringLiteral("Subtitles "),
-                          QStringLiteral("French")));
+                          QStringLiteral("English (SDH), French")));
 }
 
 // ----------------------------------------------------------------------

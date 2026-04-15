@@ -74,6 +74,11 @@ QString parsePlot(const QByteArray &json)
 QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
 {
     QList<QPair<QString, QString>> rows;
+    // Subtitle languages are collected across all Text tracks and
+    // emitted as a single comma-joined row after the loop, rather than
+    // one row per track. Dedup-while-collecting keeps the joined list
+    // tidy when multiple tracks share a language.
+    QStringList subtitleLangs;
 
     QJsonDocument doc = QJsonDocument::fromJson(json);
     QJsonObject root = doc.object().value("media").toObject();
@@ -370,9 +375,14 @@ QList<QPair<QString, QString>> parseMediaInfo(const QByteArray &json)
             if (info["Title"].isString())
                 lang += QString(" (%1)").arg(info["Title"].toString());
 
-            rows.append({QStringLiteral("Subtitles "), lang});
+            if (!subtitleLangs.contains(lang))
+                subtitleLangs.append(lang);
         }
     }
+
+    // Emit all collected subtitle languages as one row.
+    if (!subtitleLangs.isEmpty())
+        rows.append({QStringLiteral("Subtitles "), subtitleLangs.join(QStringLiteral(", "))});
 
     // Deduplicate while preserving insertion order. Multi-track files
     // often have identical Audio or Subtitles rows (e.g. two English
