@@ -33,7 +33,7 @@ private slots:
     void FileSystemHighlight(const QItemSelection &selected, const QItemSelection &deselected);
     void FileSystemExpanded(const QModelIndex &index);
 
-    void thumbnailRequest(QString &path);
+    void thumbnailRequest(const QString &path, bool prefetch = false);
     void moveWatcher(const QModelIndex &index);
 
 private:
@@ -64,7 +64,7 @@ private:
     // per unique file.
     QStringList thumbnailQueue;
     QList<QProcess *> thumbnailProcs;
-    QSet<QString> thumbnailsInFlight;
+    QStringList thumbnailsInFlight;
     int thumbnailMaxConcurrent;
 
     QString toplevel;

@@ -334,8 +334,15 @@ QString MainWindow::thumbnailCacheLookup(const QString &mediaPathName) const
     return thumb;
 }
 
-void MainWindow::thumbnailRequest(QString &path)
+void MainWindow::thumbnailRequest(const QString &path, bool prefetch)
 {
+    // prefetch=false: this file becomes next-to-run (appended to the
+    // LIFO back). prefetch=true: inserted one before the back, so it
+    // queues behind whatever the current selection asked for. This
+    // keeps a stream of prefetches from overtaking the user's actual
+    // selection, while still letting newer prefetches jump ahead of
+    // older ones.
+
     // Fast path: if the thumbnailer's on-disk cache is already fresh for
     // this file, display it directly without spawning a subprocess. Keeps
     // revisiting files snappy (including across app restarts) and lets the
@@ -362,11 +369,13 @@ void MainWindow::thumbnailRequest(QString &path)
     // recent request is the one that determines its LIFO priority.
     thumbnailQueue.removeAll(path);
 
-    // LIFO: newest request goes to the back; thumbnailStartNext() pops from
-    // the back so the most temporally recent request runs next.
-    thumbnailQueue.append(path);
+    if (prefetch)
+        thumbnailQueue.insert(qMax(0, thumbnailQueue.size() - 1), path);
+    else
+        thumbnailQueue.append(path);
 
-    qDebug() << "want thumbnail for " << path << " (queue depth " << thumbnailQueue.size() << ")";
+    qDebug() << "want thumbnail for " << path << " (queue depth " << thumbnailQueue.size()
+             << (prefetch ? ", prefetch" : "") << ")";
 
     thumbnailStartNext();
     thumbnailStatusUpdate();
@@ -381,12 +390,12 @@ void MainWindow::thumbnailStartNext()
 
         QProcess *proc = new QProcess(this);
         thumbnailProcs.append(proc);
-        thumbnailsInFlight.insert(mediaPathName);
+        thumbnailsInFlight.append(mediaPathName);
 
         connect(proc, static_cast<void (QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
                 this, [this, proc, mediaPathName](int exitCode, QProcess::ExitStatus status) {
             thumbnailProcs.removeOne(proc);
-            thumbnailsInFlight.remove(mediaPathName);
+            thumbnailsInFlight.removeOne(mediaPathName);
             proc->deleteLater();
 
             if (status != QProcess::NormalExit || exitCode != 0) {
@@ -462,6 +471,14 @@ void MainWindow::thumbnailStatusUpdate()
                                  .arg(thumbnailMaxConcurrent)));
     metadata->appendRow(row);
 
+    // Dump the in-flight files in the order they were started.
+    for (int i = 0; i < thumbnailsInFlight.size(); ++i) {
+        row.clear();
+        row.append(new QStandardItem(QString("Running %1 ").arg(i + 1)));
+        row.append(new QStandardItem(QFileInfo(thumbnailsInFlight.at(i)).fileName()));
+        metadata->appendRow(row);
+    }
+
     row.clear();
     row.append(new QStandardItem("Queued "));
     row.append(new QStandardItem(QString::number(thumbnailQueue.size())));
@@ -472,7 +489,7 @@ void MainWindow::thumbnailStatusUpdate()
     // path, labelled by 1-based slot number.
     for (int i = thumbnailQueue.size() - 1, n = 1; i >= 0; --i, ++n) {
         row.clear();
-        row.append(new QStandardItem(QString("%1 ").arg(n)));
+        row.append(new QStandardItem(QString("Queue %1 ").arg(n)));
         row.append(new QStandardItem(QFileInfo(thumbnailQueue.at(i)).fileName()));
         metadata->appendRow(row);
     }
@@ -621,7 +638,7 @@ void MainWindow::thumbnailRequestCurrent()
             if (!pfIdx.isValid()) break;
             QString pfFile = resolveMediaFile(pfIdx);
             if (!pfFile.isEmpty())
-                thumbnailRequest(pfFile);
+                thumbnailRequest(pfFile, /*prefetch=*/true);
         }
     }
 }
