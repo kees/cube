@@ -63,7 +63,7 @@ do_thumbnail()
 		# around 0.02-0.04; uniform frames near 0. awk does the float
 		# compare since bash's [ can't.
 		STDDEV=$(convert "$NEW" -format "%[fx:standard_deviation]" info:)
-		if awk -v s="$STDDEV" 'BEGIN { exit !(s > 0.05) }' ; then
+		if awk -v s="$STDDEV" 'BEGIN { exit !(s > 0.07) }' ; then
 			break
 		fi
 	done
