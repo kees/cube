@@ -168,6 +168,7 @@ def do_thumbnail(media, new_path, thumb_path, ext):
                 continue
             last_frame = frame
             sd = stddev(scratch)
+            log(f"{media}: frame {last_frame} stddev:{sd}")
             if sd is not None and sd > STDDEV_THRESHOLD:
                 break
 
