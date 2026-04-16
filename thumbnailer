@@ -191,19 +191,103 @@ def do_thumbnail(media, new_path, thumb_path, ext):
         scratch.replace(thumb_path)
 
 
+def find_external_subs(media):
+    """Scan for external subtitle files using the same discovery logic
+    as vidplay: Subs/*_Eng* (SDH, largest first), basename-matched
+    .{vtt,srt,sub} with language tags, then remaining Subs/ entries.
+    Returns a list of synthetic mediainfo Text track dicts."""
+    media_path = Path(media)
+    vidpath = media_path.parent
+    vidbase = media_path.stem
+    subs_dir = vidpath / "Subs"
+
+    seen = set()
+    tracks = []
+
+    def add(path, lang, title):
+        rp = str(path.resolve())
+        if rp in seen or not path.is_file():
+            return
+        seen.add(rp)
+        fmt = path.suffix.lstrip(".").upper()
+        if fmt == "SRT":
+            fmt = "SubRip"
+        tracks.append({
+            "@type": "Text",
+            "Language": lang or "unspecified",
+            "Title": title,
+            "Format": fmt,
+        })
+
+    # Phase 1: English SDH from Subs/ (largest first = likely SDH).
+    for d in (subs_dir, subs_dir / vidbase):
+        for p in sorted(d.glob("*_Eng*.srt"),
+                        key=lambda f: f.stat().st_size, reverse=True):
+            add(p, "English", "external, SDH")
+
+    # Phase 2: basename-matched subs in the media's own directory,
+    # ordered by language preference (same as vidplay).
+    for subext in ("vtt", "srt", "sub"):
+        candidates = []
+        for pattern in (f"{vidbase}.en_US.{subext}",
+                        f"{vidbase}.en.{subext}"):
+            p = vidpath / pattern
+            if p.is_file():
+                candidates.append(p)
+        candidates.extend(sorted(vidpath.glob(f"{vidbase}.en_*.{subext}")))
+        candidates.extend(sorted(vidpath.glob(f"{vidbase}.*.{subext}")))
+        p = vidpath / f"{vidbase}.{subext}"
+        if p.is_file():
+            candidates.append(p)
+        for p in candidates:
+            name = p.name
+            # Extract language from middle component: "base.LANG.ext"
+            inner = name[len(vidbase) + 1:]
+            parts = inner.rsplit(".", 1)
+            lang = parts[0] if len(parts) == 2 and parts[0] else ""
+            add(p, lang, "external")
+
+    # Phase 3: everything else in Subs/ (non-English catch-all).
+    if subs_dir.is_dir():
+        for p in sorted(subs_dir.iterdir()):
+            if not p.is_file():
+                continue
+            # Strip numeric prefix like "3_" → "French.srt" → "French"
+            stem = re.sub(r"^\d+_", "", p.stem)
+            add(p, stem, "external")
+
+    return tracks
+
+
 def do_json(media, new_path, json_path, ext):
     with link_to(media, ext) as link:
         new_json = Path(f"{new_path}.json")
         with open(LOG_PATH, "a") as logf, open(new_json, "wb") as out:
             r = subprocess.run(["mediainfo", "--Output=JSON", str(link)],
                                stdout=out, stderr=logf)
-        if r.returncode == 0:
-            new_json.replace(json_path)
-        else:
+        if r.returncode != 0:
             try:
                 new_json.unlink()
             except FileNotFoundError:
                 pass
+            return
+
+    # Append external subtitle tracks (Subs/ dir, basename-matched
+    # .srt/.vtt/.sub) so parseMediaInfo shows them alongside embedded
+    # tracks. Runs outside the link_to block since it reads the
+    # media's real directory, not the temp symlink.
+    ext_subs = find_external_subs(media)
+    if ext_subs:
+        try:
+            data = json.loads(new_json.read_text())
+            data.setdefault("media", {}).setdefault("track", []).extend(ext_subs)
+            with open(new_json, "w") as f:
+                json.dump(data, f, indent=1)
+            log(f"{media}: added {len(ext_subs)} external subtitle track(s)")
+        except Exception as e:
+            log(f"{media}: failed to inject external subs: {e}")
+
+    new_json.replace(json_path)
 
 
 TITLE_YEAR_RE = re.compile(r"^(.+) \((\d{4})\)$")
