@@ -132,7 +132,8 @@ ls -l $sublink >&2
 # launch below with --dvd-device added.
 dvd_opts=()
 if [ "${ext,,}" = "iso" ]; then
-	dvd_opts=("--dvd-device=$media")
+	dvd_opts=("--dvd-device=$media"
+		  "--vf=lavfi=[pullup,bwdif=mode=send_frame:parity=auto:deint=interlaced]")
 	media="dvd://longest"
 fi
 
