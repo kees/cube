@@ -45,6 +45,7 @@ private:
     void thumbnailStatusUpdate();
     void thumbnailDisplay(const QString &thumbnail);
 
+    void clearMetadataDisplay();
     void rebuildRatingsBar();
 
     Ui::MainWindow *ui;

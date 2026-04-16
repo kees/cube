@@ -246,12 +246,7 @@ void MainWindow::FileSystemHighlight(const QItemSelection &selected, const QItem
     //qDebug() << "Highlight changed: " << fs->fileName(index);
     ui->statusBar->showMessage(path);
 
-    ui->grThumbnail->scene()->clear();
-    metadata->clear();
-    currentRatingRows.clear();
-    ratingsBar->hide();
-    plotLabel->clear();
-    plotLabel->hide();
+    clearMetadataDisplay();
 
     QString heading;
 
@@ -456,7 +451,7 @@ void MainWindow::thumbnailStatusUpdate()
     if (!running && !queued)
         return;
 
-    metadata->clear();
+    clearMetadataDisplay();
 
     QList<QStandardItem *> row;
 
@@ -745,6 +740,16 @@ QIcon MainWindow::ratingIcon(const QString &key)
         it->icon = QIcon(pm);
     }
     return it->icon;
+}
+
+void MainWindow::clearMetadataDisplay()
+{
+    ui->grThumbnail->scene()->clear();
+    metadata->clear();
+    currentRatingRows.clear();
+    ratingsBar->hide();
+    plotLabel->clear();
+    plotLabel->hide();
 }
 
 void MainWindow::rebuildRatingsBar()
