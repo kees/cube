@@ -112,31 +112,4 @@ ANA_DIMS=$(identify -format '%wx%h' "$ANA_THUMB")
 [ "$ANA_DIMS" = "1920x720" ] \
 	|| fail "anamorphic thumb dims wrong: got '$ANA_DIMS' expected 1920x720 (would be 960x720 under the old non-SAR-aware filter)"
 
-# --- Test 7: updating the thumbnailer script itself invalidates caches. ---
-# When the generating logic changes (as it just did for the anamorphic fix),
-# existing cached thumbnails should be regenerated — not silently reused.
-# Operate on a *copy* of the script so we can safely `touch` it without
-# mutating the real repo file; the copy's $0 resolves to the copy's path so
-# the in-script SELF=$(command -v "$0") reads the copy's mtime.
-COPY="$TESTDIR/thumbnailer_copy"
-cp "$THUMBNAILER" "$COPY"
-chmod +x "$COPY"
-
-# Prime: run once via the copy so the cache reflects the copy's mtime baseline.
-"$COPY" "$MEDIA" >/dev/null
-BEFORE=$(stat -c '%.9Y' "$THUMB")
-
-# Advance the copy's mtime well past the thumb's; re-run and confirm regen.
-touch -d "2031-01-01 00:00:00" "$COPY"
-"$COPY" "$MEDIA" >/dev/null
-REGEN=$(stat -c '%.9Y' "$THUMB")
-[ "$REGEN" != "$BEFORE" ] || fail "script mtime change did not invalidate thumb"
-
-# Same check for the JSON sidecar.
-BEFORE_JSON=$(stat -c '%.9Y' "$THUMB.json")
-touch -d "2032-01-01 00:00:00" "$COPY"
-"$COPY" "$MEDIA" >/dev/null
-REGEN_JSON=$(stat -c '%.9Y' "$THUMB.json")
-[ "$REGEN_JSON" != "$BEFORE_JSON" ] || fail "script mtime change did not invalidate json"
-
 echo "OK: test_thumbnailer.sh"

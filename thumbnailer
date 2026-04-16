@@ -402,19 +402,17 @@ def main():
     thumb    = CACHE / index / f"{h}.png"
     json_sidecar = Path(f"{thumb}.json")
     ratings      = Path(f"{thumb}.ratings")
-    self_path = os.path.abspath(__file__)
-
-    if is_stale(thumb, media, self_path):
+    if is_stale(thumb, media):
         do_thumbnail(media, new_path, thumb, base_ext)
     else:
         log(f"{media}: using thumb {thumb}")
 
-    if is_stale(json_sidecar, media, self_path):
+    if is_stale(json_sidecar, media):
         do_json(media, new_path, json_sidecar, base_ext)
     else:
         log(f"{media}: using json {json_sidecar}")
 
-    if is_stale(ratings, media, self_path):
+    if is_stale(ratings, media):
         do_ratings(media, new_path, ratings)
     else:
         log(f"{media}: using ratings {ratings}")

@@ -74,12 +74,6 @@ private:
     // Width of the left-hand media column as a fraction of the window
     // width. Default 1/3. Clamped to [0.1, 0.9] in the constructor.
     double mediaColumnWidth;
-    // Absolute path of `program_thumbnailer` resolved at construction time
-    // via QStandardPaths::findExecutable, so `thumbnailCacheLookup` doesn't
-    // walk $PATH on every selection change. Empty if the program couldn't
-    // be located; in that case the cache's "is the script newer than the
-    // thumb?" check is skipped.
-    QString thumbnailerPath;
     QString iconDir;
 
     struct RatingService {
