@@ -112,4 +112,79 @@ ANA_DIMS=$(identify -format '%wx%h' "$ANA_THUMB")
 [ "$ANA_DIMS" = "1920x720" ] \
 	|| fail "anamorphic thumb dims wrong: got '$ANA_DIMS' expected 1920x720 (would be 960x720 under the old non-SAR-aware filter)"
 
-echo "OK: test_thumbnailer.sh"
+# --- Test 7: external subtitle discovery ---
+# Create a media file inside a directory structure that exercises all
+# three phases of vidplay's subtitle logic, then verify the synthetic
+# Text tracks appear in the JSON sidecar.
+
+SUBDIR="$TESTDIR/Movies/Test Movie (2020)"
+mkdir -p "$SUBDIR/Subs"
+SUBMEDIA="$SUBDIR/Test Movie (2020).mp4"
+cp "$MEDIA" "$SUBMEDIA"
+SUBBASE="Test Movie (2020)"
+
+# Phase 1: Subs/*_Eng*.srt (English SDH, largest first)
+echo "large english sdh" > "$SUBDIR/Subs/2_English.srt"
+echo "small eng" > "$SUBDIR/Subs/3_Eng.srt"
+
+# Phase 2: basename-matched with language tags
+echo "french" > "$SUBDIR/${SUBBASE}.fr.srt"
+echo "bare" > "$SUBDIR/${SUBBASE}.srt"
+
+# Phase 3a: VobSub .idx/.sub pair (DVD rip with language info)
+cat > "$SUBDIR/Subs/${SUBBASE}.idx" <<'IDXEOF'
+# VobSub index file
+id: en, index: 0
+id: fr, index: 1
+IDXEOF
+printf 'fake vobsub data' > "$SUBDIR/Subs/${SUBBASE}.sub"
+
+# Phase 3b: non-English SRT in Subs/
+echo "spanish" > "$SUBDIR/Subs/4_Spanish.srt"
+
+# Invalidate any prior cache for this file.
+SUB_REAL=$(realpath "$SUBMEDIA")
+SUB_HASH=$(echo -n "$SUB_REAL" | sha256sum | awk '{print $1}')
+SUB_THUMB="$HOME/.cache/playback/thumbnails/${SUB_HASH:0:2}/$SUB_HASH.png"
+rm -f "$SUB_THUMB" "$SUB_THUMB.json" "$SUB_THUMB.ratings" 2>/dev/null
+
+"$THUMBNAILER" "$SUBMEDIA" >/dev/null
+
+[ -f "$SUB_THUMB.json" ] || fail "external subs: JSON sidecar not created"
+
+# Count Text tracks in the JSON.
+TEXT_COUNT=$(python3 -c "
+import json, sys
+data = json.load(open('$SUB_THUMB.json'))
+tracks = [t for t in data.get('media',{}).get('track',[]) if t.get('@type') == 'Text']
+print(len(tracks))
+")
+# Expect 7 external sub tracks: 2_English, 3_Eng, fr, bare,
+# VobSub en + fr (from .idx), 4_Spanish.
+# (The media itself has no embedded subs.)
+[ "$TEXT_COUNT" = "7" ] \
+	|| fail "external subs: expected 7 Text tracks, got $TEXT_COUNT"
+
+# Verify specific languages are present.
+LANGS=$(python3 -c "
+import json
+data = json.load(open('$SUB_THUMB.json'))
+tracks = [t for t in data.get('media',{}).get('track',[]) if t.get('@type') == 'Text']
+print(' '.join(sorted(t.get('Language','?') for t in tracks)))
+")
+# English (x2 from SDH), en (bare .srt + DVD), fr (srt + DVD), Spanish
+[ "$LANGS" = "English English Spanish en en fr fr" ] \
+	|| fail "external subs: unexpected languages: '$LANGS'"
+
+# Verify DVD title tag on VobSub tracks.
+DVD_COUNT=$(python3 -c "
+import json
+data = json.load(open('$SUB_THUMB.json'))
+tracks = [t for t in data.get('media',{}).get('track',[])
+          if t.get('@type') == 'Text' and t.get('Title') == 'DVD']
+print(len(tracks))
+")
+[ "$DVD_COUNT" = "2" ] \
+	|| fail "external subs: expected 2 DVD-tagged tracks, got $DVD_COUNT"
+
+echo "PASS   : test_thumbnailer.sh"

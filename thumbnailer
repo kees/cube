@@ -204,26 +204,18 @@ def find_external_subs(media):
     seen = set()
     tracks = []
 
-    def add(path, lang, title):
+    def add(path, lang):
         rp = str(path.resolve())
         if rp in seen or not path.is_file():
             return
         seen.add(rp)
-        fmt = path.suffix.lstrip(".").upper()
-        if fmt == "SRT":
-            fmt = "SubRip"
-        tracks.append({
-            "@type": "Text",
-            "Language": lang or "unspecified",
-            "Title": title,
-            "Format": fmt,
-        })
+        tracks.append({"@type": "Text", "Language": lang or "en"})
 
     # Phase 1: English SDH from Subs/ (largest first = likely SDH).
     for d in (subs_dir, subs_dir / vidbase):
         for p in sorted(d.glob("*_Eng*.srt"),
                         key=lambda f: f.stat().st_size, reverse=True):
-            add(p, "English", "external, SDH")
+            add(p, "English")
 
     # Phase 2: basename-matched subs in the media's own directory,
     # ordered by language preference (same as vidplay).
@@ -240,21 +232,47 @@ def find_external_subs(media):
         if p.is_file():
             candidates.append(p)
         for p in candidates:
-            name = p.name
             # Extract language from middle component: "base.LANG.ext"
-            inner = name[len(vidbase) + 1:]
+            inner = p.name[len(vidbase) + 1:]
             parts = inner.rsplit(".", 1)
             lang = parts[0] if len(parts) == 2 and parts[0] else ""
-            add(p, lang, "external")
+            add(p, lang)
 
-    # Phase 3: everything else in Subs/ (non-English catch-all).
+    # Phase 3: everything else in Subs/.
     if subs_dir.is_dir():
+        # Handle VobSub .idx/.sub pairs first — these are DVD subtitle
+        # rips with bitmap-based tracks. The .idx file lists the
+        # languages (one "id: XX, index: N" line per track).
+        idx_consumed = set()
+        for idx in sorted(subs_dir.glob("*.idx")):
+            sub_file = idx.with_suffix(".sub")
+            if not sub_file.is_file():
+                continue
+            idx_consumed.add(str(idx.resolve()))
+            idx_consumed.add(str(sub_file.resolve()))
+            seen.add(str(sub_file.resolve()))
+            langs = []
+            try:
+                for line in idx.read_text(errors="replace").splitlines():
+                    m = re.match(r"^id:\s*(\w+)", line)
+                    if m:
+                        langs.append(m.group(1))
+            except Exception:
+                pass
+            for lang in (langs or ["en"]):
+                tracks.append({
+                    "@type": "Text",
+                    "Language": lang,
+                    "Title": "DVD",
+                })
+
+        # Non-paired files (SRT, SSA, etc.).
         for p in sorted(subs_dir.iterdir()):
-            if not p.is_file():
+            if not p.is_file() or str(p.resolve()) in idx_consumed:
                 continue
             # Strip numeric prefix like "3_" → "French.srt" → "French"
             stem = re.sub(r"^\d+_", "", p.stem)
-            add(p, stem, "external")
+            add(p, stem)
 
     return tracks
 
