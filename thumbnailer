@@ -113,12 +113,18 @@ def run_to_log(cmd):
 
 
 def mpv_frame(link, new_path, frame):
-    # Anamorphic-safe scale: multiply coded width by SAR first to
-    # convert to square-pixel display dimensions, then scale to the
-    # 720-tall thumbnail target. Without the first pass a 720x480 NTSC
-    # 16:9 source would thumbnail to 1080x720 instead of 1280x720.
+    # DVD ISOs must be opened via dvd://longest so mpv uses its DVD
+    # demuxer and selects the feature title, not the menu.
+    source = [f"--dvd-device={link}", "dvd://longest"] \
+        if str(link).endswith(".iso") else [str(link)]
     return run_to_log([
-        "mpv", str(link), "--quiet", "--no-audio", "--sid=no", "--hwdec=no",
+        "mpv", *source,
+        "--quiet", "--no-audio", "--sid=no", "--hwdec=no",
+        # Anamorphic-safe scale: multiply coded width by SAR first to
+        # convert to square-pixel display dimensions, then scale to the
+        # 720-tall thumbnail target. Without the first pass a 720x480
+        # NTSC 16:9 source would thumbnail to 1080x720 instead of
+        # 1280x720.
         "--vf=lavfi=[scale=iw*sar:ih,scale=-1:720]",
         # update=1 silences ffmpeg's image2 muxer warning about
         # missing %d patterns — we're deliberately writing a single

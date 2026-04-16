@@ -79,6 +79,7 @@ fi
 ext=$(echo "$vidfile" | awk -F. '{print $NF}')
 vidbase=$(basename "$vidfile" ".$ext")
 
+
 oldIFS="$IFS"
 IFS=$'\n'
 count=1
@@ -125,6 +126,16 @@ ls -l $sublink >&2
 #	ln -s "$sub" $sublink/"$base".en.srt
 #fi
 
+# DVD ISOs: use mpv's DVD demuxer to play the longest title.
+# No menu navigation (mpv lacks libdvdnav), but gets the feature
+# film right for the common case. Falls through to the normal mpv
+# launch below with --dvd-device added.
+dvd_opts=()
+if [ "${ext,,}" = "iso" ]; then
+	dvd_opts=("--dvd-device=$media")
+	media="dvd://longest"
+fi
+
 # If the mpv UI don't launch (detected "VO: " in output), there is no
 # way to map X input into the program to shut it down if it hangs. So
 # kill it after 5 seconds if we don't see it.
@@ -137,7 +148,7 @@ fi) &
 
 # Prepare an IPC socket for remote command control.
 socket=~/.cache/playback/mpv-socket
-/usr/bin/mpv --input-ipc-server="$socket" --quiet --fs $lang -- "$media" 2>&1 | tee -a "$LOG" &
+/usr/bin/mpv --input-ipc-server="$socket" --quiet --fs $lang "${dvd_opts[@]}" -- "$media" 2>&1 | tee -a "$LOG" &
 mpv_pid=$!
 
 # Let the video cache, start, and initialize audio on the stereo, then
