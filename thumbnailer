@@ -110,7 +110,7 @@ def http_text(url):
         capture_output=True,
     )
     if r.returncode != 0:
-        raise RuntimeError(f"curl failed ({r.returncode}) for {url}")
+        raise RuntimeError(f"curl failed ({r.returncode})")
     return r.stdout.decode("utf-8", errors="replace")
 
 
@@ -309,9 +309,9 @@ def do_json(media, new_path, json_path, ext):
             data.setdefault("media", {}).setdefault("track", []).extend(ext_subs)
             with open(new_json, "w") as f:
                 json.dump(data, f, indent=1)
-            log(f"{media}: added {len(ext_subs)} external subtitle track(s)")
+            log(f"added {len(ext_subs)} external subtitle track(s)")
         except Exception as e:
-            log(f"{media}: failed to inject external subs: {e}")
+            log(f"failed to inject external subs: {e}")
 
     new_json.replace(json_path)
 
@@ -355,11 +355,11 @@ def omdb_call(params):
         return {"Response": "False", "Error": str(e)}
 
 
-def fetch_omdb(media, key, candidates, year):
+def fetch_omdb(key, candidates, year):
     """Returns (rt, imdb, metacritic, plot, authoritative_title).
     All empty strings if nothing was found."""
     if not key:
-        log(f"{media}: no omdb_apikey configured, skipping OMDb")
+        log(f"no omdb_apikey configured, skipping OMDb")
         return "", "", "", "", ""
 
     # Phase 1: find the right IMDb entry via search. OMDb's title
@@ -371,7 +371,7 @@ def fetch_omdb(media, key, candidates, year):
     for scand in candidates:
         r = omdb_call({"s": scand, "y": year, "type": "movie", "apikey": key})
         if r.get("Response") != "True":
-            log(f"{media}: OMDb search '{scand}' failed: "
+            log(f"OMDb search '{scand}' failed: "
                 f"{r.get('Error', 'unknown')}")
             continue
         cand_norm = normalize(scand)
@@ -383,9 +383,9 @@ def fetch_omdb(media, key, candidates, year):
         if hit:
             best_id = hit.get("imdbID", "")
             omdb_title = hit.get("Title", "")
-            log(f"{media}: OMDb search '{scand}' matched '{omdb_title}' ({best_id})")
+            log(f"OMDb search '{scand}' matched '{omdb_title}' ({best_id})")
             break
-        log(f"{media}: OMDb search '{scand}' returned no title-prefix match")
+        log(f"OMDb search '{scand}' returned no title-prefix match")
 
     if not best_id:
         return "", "", "", "", omdb_title
@@ -393,7 +393,7 @@ def fetch_omdb(media, key, candidates, year):
     # Phase 2: fetch full entry (ratings array + plot) by IMDb ID.
     data = omdb_call({"i": best_id, "plot": "short", "apikey": key})
     if data.get("Response") != "True":
-        log(f"{media}: OMDb i={best_id} fetch failed: "
+        log(f"OMDb i={best_id} fetch failed: "
             f"{data.get('Error', 'unknown')}")
         return "", "", "", "", omdb_title
 
@@ -405,7 +405,7 @@ def fetch_omdb(media, key, candidates, year):
     plot = data.get("Plot") or ""
     if plot == "N/A":
         plot = ""
-    log(f"{media}: OMDb: RT={rt} IMDb={imdb} Metacritic={metacritic} "
+    log(f"OMDb: RT={rt} IMDb={imdb} Metacritic={metacritic} "
         f"plot={'yes' if plot else ''}")
     return rt, imdb, metacritic, plot, omdb_title
 
@@ -419,7 +419,7 @@ def rt_slug(title):
     return re.sub(r"[^a-z0-9]+", "_", stripped).strip("_")
 
 
-def fetch_rt(media, candidates, year):
+def fetch_rt(candidates, year):
     """Scrape Rotten Tomatoes' Tomatometer from JSON-LD. More reliable
     than OMDb's RT score which can be stale or wrong (e.g. "In the
     Shadow of the Moon" 2019 shows 95% from the 2007 documentary
@@ -435,11 +435,13 @@ def fetch_rt(media, candidates, year):
         for url in (f"https://www.rottentomatoes.com/m/{slug}",
                     f"https://www.rottentomatoes.com/m/{slug}_{year}"):
             try:
+                log(f"RT lookup {url}")
                 page = http_text(url)
             except Exception as e:
-                log(f"{media}: RT {url}: {e}")
+                log(f"RT {url}: {e}")
                 continue
             if not page:
+                log(f"RT {url} empty")
                 continue
             for m in re.finditer(
                 r'<script type="application/ld\+json">(.*?)</script>',
@@ -448,25 +450,32 @@ def fetch_rt(media, candidates, year):
                 try:
                     data = json.loads(m.group(1))
                 except json.JSONDecodeError:
+                    log(f"RT {url} json decode error")
                     continue
                 ar = data.get("aggregateRating", {})
                 if ar.get("name") != "Tomatometer":
+                    wat = ar.get("name")
+                    log(f"RT {url} {wat} != Tomatometer")
                     continue
                 # Verify year: dateCreated for older films, or (YYYY)
                 # in the name for newer disambiguated entries.
                 dc = (data.get("dateCreated") or "")[:4]
                 name = data.get("name", "")
                 if dc == year or f"({year})" in name:
-                    score = f"{ar.get('ratingValue', '')}%"
-                    log(f"{media}: RT ({url}): {score}")
+                    val = ar.get("ratingValue", "")
+                    if not val:
+                        log(f"RT {url}: year matched but ratingValue empty")
+                        continue
+                    score = f"{val}%"
+                    log(f"RT ({url}): {score}")
                     return score
-                log(f"{media}: RT {url}: year mismatch "
+                log(f"RT {url}: year mismatch "
                     f"(dateCreated={dc!r}, name={name!r}, want {year})")
-    log(f"{media}: RT lookup failed for slugs: " + " ".join(tried))
+    log(f"RT lookup failed for slugs: " + " ".join(tried))
     return ""
 
 
-def fetch_letterboxd(media, candidates, year):
+def fetch_letterboxd(candidates, year):
     """Scrape Letterboxd's JSON-LD rating for the first candidate slug
     whose page exists and verifies the expected year."""
     tried = []
@@ -481,27 +490,32 @@ def fetch_letterboxd(media, candidates, year):
         for url in (f"https://letterboxd.com/film/{slug}/",
                     f"https://letterboxd.com/film/{slug}-{year}/"):
             try:
+                log(f"Letterboxd lookup {url}")
                 page = http_text(url)
-            except Exception:
+            except Exception as e:
+                log(f"Letterboxd {url}: {e}")
                 continue
             if not page:
+                log(f"Letterboxd {url} empty")
                 continue
             # Verify the year via the og:title meta tag — e.g.
             # <meta property="og:title" content="The Matrix (1999)">.
             if not re.search(rf'property="og:title".*\({re.escape(year)}\)', page):
+                log(f"Letterboxd {url} og:title missing")
                 continue
             # Rating comes from the JSON-LD aggregateRating block
             # (more stable than HTML display elements; the schema.org
             # markup is part of their SEO and rarely changes).
             m = re.search(r'"ratingValue":([0-9.]+)', page)
             if not m:
-                return ""
+                log(f"Letterboxd {url} ratingValue missing")
+                continue
             # printf '%g' behavior: strip trailing zeros, no scientific
             # notation for the 0..5 range we care about.
             letterboxd = f"{float(m.group(1)):g}/5"
-            log(f"{media}: Letterboxd ({url}): {letterboxd}")
+            log(f"Letterboxd ({url}): {letterboxd}")
             return letterboxd
-    log(f"{media}: Letterboxd lookup failed for slugs: " + " ".join(tried))
+    log(f"Letterboxd lookup failed for slugs: " + " ".join(tried))
     return ""
 
 
@@ -528,7 +542,7 @@ def do_ratings(media, new_path, ratings_path):
             candidates.append(trimmed)
 
     key = read_omdb_key()
-    omdb_rt, imdb, metacritic, plot, omdb_title = fetch_omdb(media, key, candidates, year)
+    omdb_rt, imdb, metacritic, plot, omdb_title = fetch_omdb(key, candidates, year)
 
     # Use OMDb's authoritative title for services that need slugs —
     # it's the most likely to match canonical URLs (e.g. "Terminator
@@ -540,7 +554,7 @@ def do_ratings(media, new_path, ratings_path):
 
     # Scrape RT directly — OMDb's RT score can be stale or wrong.
     # Fall back to OMDb's value only if the scrape fails.
-    scraped_rt = fetch_rt(media, slug_candidates, year)
+    scraped_rt = fetch_rt(slug_candidates, year)
     if scraped_rt:
         if omdb_rt and scraped_rt != omdb_rt:
             log(f"{media}: RT scraped {scraped_rt} overrides OMDb {omdb_rt}")
@@ -550,7 +564,7 @@ def do_ratings(media, new_path, ratings_path):
         if rt:
             log(f"{media}: RT scrape failed, using OMDb value {rt}")
 
-    letterboxd = fetch_letterboxd(media, slug_candidates, year)
+    letterboxd = fetch_letterboxd(slug_candidates, year)
 
     if not any([rt, imdb, metacritic, letterboxd, plot]):
         log(f"{media}: no ratings retrieved, skipping .ratings file")
